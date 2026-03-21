@@ -68,6 +68,30 @@ end
 function __agent_stats_claude_prompt
     set -l usage_file $argv[1]
 
+    if test (__agent_stats_auth claude) = apikey
+        # API key user: return today's token count + message count
+        set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
+        if test -z "$jsonl_files"
+            echo "0 0 apikey"
+            return
+        end
+        set -l today (date +%Y-%m-%d)
+        set -l result (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r --arg today $today '
+            [.[] | select(.timestamp[:10] == $today)] |
+            group_by(.message.id) | map(last) |
+            {
+                tokens: ([.[].message.usage | (.input_tokens + .output_tokens + (.cache_read_input_tokens // 0))] | add // 0),
+                msgs: length
+            } | "\(.tokens) \(.msgs)"
+        ' 2>/dev/null)
+        if test -n "$result"
+            echo "$result apikey"
+        else
+            echo "0 0 apikey"
+        end
+        return
+    end
+
     set -l usage (__agent_stats_claude_usage $usage_file)
     set -l parts (string split " " $usage)
     set -l five_hour $parts[2]
@@ -79,6 +103,74 @@ end
 
 function __agent_stats_claude_compact
     set -l usage_file $argv[1]
+
+    if test (__agent_stats_auth claude) = apikey
+        # API key user: show today's tokens, messages, and cost
+        set -l today (date +%Y-%m-%d)
+        set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
+
+        set -l today_tokens 0
+        set -l today_msgs 0
+        set -l today_cost 0
+
+        if test -n "$jsonl_files"
+            # Get per-model token data for today (for cost calculation)
+            set -l model_data (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r --arg today $today '
+                [.[] | select(.timestamp[:10] == $today)] |
+                group_by(.message.id) | map(last) |
+                group_by(.message.model) |
+                map({
+                    model: .[0].message.model,
+                    input: ([.[].message.usage.input_tokens] | add),
+                    output: ([.[].message.usage.output_tokens] | add),
+                    cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
+                }) | .[] | "\(.model) \(.input) \(.output) \(.cache)"
+            ' 2>/dev/null)
+
+            for line in $model_data
+                set -l p (string split " " $line)
+                set -l model_name (string replace "claude-" "" -- $p[1] | string replace -- "-thinking" "")
+                set today_tokens (math "$today_tokens + $p[2] + $p[3] + $p[4]")
+                set -l cost (__agent_stats_cost claude $model_name $p[2] $p[3] $p[4])
+                if test $status -eq 0 -a -n "$cost"
+                    set today_cost (math "$today_cost + $cost")
+                end
+            end
+
+            set today_msgs (grep -h '"type":"user"' $jsonl_files 2>/dev/null | jq -s -r --arg today $today '
+                [.[] | select(.timestamp[:10] == $today)] | length
+            ' 2>/dev/null)
+            test -z "$today_msgs"; and set today_msgs 0
+        end
+
+        set_color brblue
+        printf "Claude"
+        set_color normal
+        printf " ("
+        set_color bryellow
+        printf "API"
+        set_color normal
+        printf ") "
+        set_color bryellow
+        printf "%s" (__agent_stats_format tokens $today_tokens)
+        set_color normal
+        set_color --dim
+        printf " tokens"
+        set_color normal
+        printf ", "
+        set_color bryellow
+        printf "%s" $today_msgs
+        set_color normal
+        printf " msgs"
+        if test "$today_cost" != 0
+            printf " "
+            set_color brgreen
+            printf "~%s" (__agent_stats_format cost $today_cost)
+            set_color normal
+        end
+        echo
+        return
+    end
 
     set -l usage (__agent_stats_claude_usage $usage_file)
     set -l parts (string split " " $usage)

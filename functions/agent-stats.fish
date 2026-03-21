@@ -128,6 +128,15 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
         echo
         printf "  "
         set_color brblue
+        printf "agent_stats_cost_rates_custom"
+        set_color normal
+        printf "  Set to 'true' to keep custom rates "
+        set_color --dim
+        printf "(prevents override on update)"
+        set_color normal
+        echo
+        printf "  "
+        set_color brblue
         printf "agent_stats_cost_currency"
         set_color normal
         printf "     Currency code "
@@ -219,6 +228,9 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
                 for f in /tmp/agent_stats_cache_*
                     rm -f $f 2>/dev/null
                 end
+                set -e __agent_stats_auth_claude
+                set -e __agent_stats_auth_codex
+                set -e __agent_stats_auth_gemini
                 # Fall through to display
 
             case cost

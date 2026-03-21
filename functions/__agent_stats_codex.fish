@@ -74,6 +74,38 @@ function __agent_stats_codex_prompt
     set -l sessions_dir $argv[1]
     set -l history_file $argv[2]
 
+    if test (__agent_stats_auth codex) = apikey
+        # API key user: return today's token count + message count
+        set -l today (date +%Y-%m-%d)
+        set -l today_tokens 0
+        set -l today_msgs 0
+
+        set -l today_files (find $sessions_dir -name '*.jsonl' -newermt "1 day ago" 2>/dev/null)
+        for f in $today_files
+            set -l date_match (string match -r '(\d{4})/(\d{2})/(\d{2})' $f)
+            if test (count $date_match) -ge 4
+                set -l date_str "$date_match[2]-$date_match[3]-$date_match[4]"
+                if test "$date_str" = "$today"
+                    set -l tok (grep '"token_count"' $f 2>/dev/null | tail -1 | jq -r '
+                        .payload.info.total_token_usage // empty |
+                        (.input_tokens // 0) + (.output_tokens // 0)
+                    ' 2>/dev/null)
+                    if test -n "$tok"
+                        set today_tokens (math "$today_tokens + $tok")
+                    end
+                end
+            end
+        end
+
+        if test -f $history_file
+            set today_msgs (tail -500 $history_file | jq -r --arg today $today 'select(.ts >= ($today + "T00:00:00" | strptime("%Y-%m-%dT%H:%M:%S") | mktime)) | .ts' 2>/dev/null | wc -l | string trim)
+            test -z "$today_msgs"; and set today_msgs 0
+        end
+
+        echo "$today_tokens $today_msgs apikey"
+        return
+    end
+
     set -l rate (__agent_stats_codex_rate_limits $sessions_dir)
     set -l parts (string split " " $rate)
     set -l five_hour $parts[2]
@@ -89,6 +121,71 @@ end
 function __agent_stats_codex_compact
     set -l sessions_dir $argv[1]
     set -l history_file $argv[2]
+
+    if test (__agent_stats_auth codex) = apikey
+        # API key user: show today's tokens, messages, and cost
+        set -l today (date +%Y-%m-%d)
+        set -l today_tokens 0
+        set -l today_msgs 0
+        set -l today_cost 0
+
+        set -l today_files (find $sessions_dir -name '*.jsonl' -newermt "1 day ago" 2>/dev/null)
+        for f in $today_files
+            set -l date_match (string match -r '(\d{4})/(\d{2})/(\d{2})' $f)
+            if test (count $date_match) -ge 4
+                set -l date_str "$date_match[2]-$date_match[3]-$date_match[4]"
+                if test "$date_str" = "$today"
+                    set -l tok_line (grep '"token_count"' $f 2>/dev/null | tail -1 | jq -r '
+                        .payload.info.total_token_usage // empty |
+                        "\(.input_tokens // 0) \(.output_tokens // 0) \(.cached_input_tokens // 0) \(.reasoning_output_tokens // 0)"
+                    ' 2>/dev/null)
+                    if test -n "$tok_line"
+                        set -l tp (string split " " $tok_line)
+                        set today_tokens (math "$today_tokens + $tp[1] + $tp[2]")
+                        set -l session_model (grep '"turn_context"' $f 2>/dev/null | tail -1 | jq -r '.payload.model // ""' 2>/dev/null)
+                        test -z "$session_model"; and set session_model unknown
+                        set -l cost (__agent_stats_cost codex $session_model $tp[1] $tp[2] $tp[3] $tp[4])
+                        if test $status -eq 0 -a -n "$cost"
+                            set today_cost (math "$today_cost + $cost")
+                        end
+                    end
+                end
+            end
+        end
+
+        if test -f $history_file
+            set today_msgs (tail -500 $history_file | jq -r --arg today $today 'select(.ts >= ($today + "T00:00:00" | strptime("%Y-%m-%dT%H:%M:%S") | mktime)) | .ts' 2>/dev/null | wc -l | string trim)
+            test -z "$today_msgs"; and set today_msgs 0
+        end
+
+        set_color brgreen
+        printf "Codex"
+        set_color normal
+        printf " ("
+        set_color bryellow
+        printf "API"
+        set_color normal
+        printf ") "
+        set_color bryellow
+        printf "%s" (__agent_stats_format tokens $today_tokens)
+        set_color normal
+        set_color --dim
+        printf " tokens"
+        set_color normal
+        printf ", "
+        set_color bryellow
+        printf "%s" $today_msgs
+        set_color normal
+        printf " msgs"
+        if test "$today_cost" != 0
+            printf " "
+            set_color brgreen
+            printf "~%s" (__agent_stats_format cost $today_cost)
+            set_color normal
+        end
+        echo
+        return
+    end
 
     set -l rate (__agent_stats_codex_rate_limits $sessions_dir)
     set -l parts (string split " " $rate)

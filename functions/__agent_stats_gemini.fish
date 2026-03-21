@@ -106,22 +106,72 @@ function __agent_stats_gemini_compact
         printf ": no activity today"
         set_color normal
     else
-        printf ": "
-        set_color bryellow
-        printf "%s" (__agent_stats_format tokens $today_tokens)
-        set_color normal
-        set_color --dim
-        printf " tokens"
-        set_color normal
-        printf " | "
-        set_color bryellow
-        printf "%s" $today_msgs
-        set_color normal
-        printf " msg"
-        if test -n "$today_model" -a "$today_model" != ""
-            set_color --dim
-            printf " · %s" $today_model
+        if test (__agent_stats_auth gemini) = apikey
+            # API key user: show tokens, messages, and cost
+            printf " ("
+            set_color bryellow
+            printf "API"
             set_color normal
+            printf ") "
+            set_color bryellow
+            printf "%s" (__agent_stats_format tokens $today_tokens)
+            set_color normal
+            set_color --dim
+            printf " tokens"
+            set_color normal
+            printf ", "
+            set_color bryellow
+            printf "%s" $today_msgs
+            set_color normal
+            printf " msgs"
+
+            # Calculate today's cost
+            if test -n "$chat_files"
+                set -l today_cost 0
+                set -l cost_data (cat $chat_files 2>/dev/null | jq -s -r --arg today $today '
+                    [.[] | select(.startTime[:10] == $today) | .messages[] | select(.tokens and .model)] |
+                    group_by(.model) |
+                    map({
+                        model: .[0].model,
+                        input: ([.[].tokens.input // 0] | add),
+                        output: (([.[].tokens.output // 0] | add) + ([.[].tokens.thoughts // 0] | add)),
+                        cached: ([.[].tokens.cached // 0] | add)
+                    }) | .[] | "\(.model) \(.input) \(.output) \(.cached)"
+                ' 2>/dev/null)
+
+                for line in $cost_data
+                    set -l cp (string split " " $line)
+                    set -l cost (__agent_stats_cost gemini $cp[1] $cp[2] $cp[3] $cp[4])
+                    if test $status -eq 0 -a -n "$cost"
+                        set today_cost (math "$today_cost + $cost")
+                    end
+                end
+
+                if test "$today_cost" != 0
+                    printf " "
+                    set_color brgreen
+                    printf "~%s" (__agent_stats_format cost $today_cost)
+                    set_color normal
+                end
+            end
+        else
+            printf ": "
+            set_color bryellow
+            printf "%s" (__agent_stats_format tokens $today_tokens)
+            set_color normal
+            set_color --dim
+            printf " tokens"
+            set_color normal
+            printf " | "
+            set_color bryellow
+            printf "%s" $today_msgs
+            set_color normal
+            printf " msg"
+            if test -n "$today_model" -a "$today_model" != ""
+                set_color --dim
+                printf " · %s" $today_model
+                set_color normal
+            end
         end
     end
     echo
@@ -387,7 +437,8 @@ function __agent_stats_gemini_cost
         set -l cached $p[4]
         set -l thoughts $p[5]
 
-        set -l cost (__agent_stats_cost gemini $model $input $output $cached $thoughts)
+        # Fold thinking tokens into output (Gemini bills thinking at output rate)
+        set -l cost (__agent_stats_cost gemini $model $input (math "$output + $thoughts") $cached)
         set -l cost_str "—"
         if test $status -eq 0 -a -n "$cost"
             set total_cost (math "$total_cost + $cost")

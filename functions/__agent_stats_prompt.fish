@@ -27,39 +27,58 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
 
         switch $provider
             case claude
-                # data format: "FIVE_HOUR SEVEN_DAY PLAN_NAME"
+                # data format: "FIVE_HOUR SEVEN_DAY PLAN_NAME" or "TOKEN_COUNT MSG_COUNT apikey"
                 set -l fields (string split " " $data)
-                set -l five_hour $fields[1]
-                set -l seven_day $fields[2]
 
-                # Color the percentage based on usage level
-                # Anthropic orange for the label
                 set -l segment
-                if test "$five_hour" -ge 80 2>/dev/null
-                    set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
-                else if test "$five_hour" -ge 50 2>/dev/null
-                    set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
+                if test "$fields[3]" = apikey
+                    # API key user: show token count
+                    set -l tokens $fields[1]
+                    if test "$tokens" != "0" 2>/dev/null; and test "$tokens" -gt 0 2>/dev/null
+                        set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color bryellow)(__agent_stats_format tokens $tokens)(set_color normal)
+                    end
                 else
-                    set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color green)$five_hour"%"(set_color normal)
+                    # Account user: show rate limit percentage
+                    set -l five_hour $fields[1]
+                    if test "$five_hour" -ge 80 2>/dev/null
+                        set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
+                    else if test "$five_hour" -ge 50 2>/dev/null
+                        set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
+                    else
+                        set segment (set_color e8590c)$icon_claude(set_color normal)" "(set_color green)$five_hour"%"(set_color normal)
+                    end
                 end
 
-                set -a parts $segment
+                if test -n "$segment"
+                    set -a parts $segment
+                end
 
             case codex
-                # data format: "FIVE_HOUR SEVEN_DAY" (rate limit percentages)
+                # data format: "FIVE_HOUR SEVEN_DAY" or "TOKEN_COUNT MSG_COUNT apikey"
                 set -l fields (string split " " $data)
-                set -l five_hour $fields[1]
 
                 set -l segment
-                if test "$five_hour" -ge 80 2>/dev/null
-                    set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
-                else if test "$five_hour" -ge 50 2>/dev/null
-                    set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
+                if test "$fields[3]" = apikey
+                    # API key user: show token count
+                    set -l tokens $fields[1]
+                    if test "$tokens" != "0" 2>/dev/null; and test "$tokens" -gt 0 2>/dev/null
+                        set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color bryellow)(__agent_stats_format tokens $tokens)(set_color normal)
+                    end
                 else
-                    set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color green)$five_hour"%"(set_color normal)
+                    # Account user: show rate limit percentage
+                    set -l five_hour $fields[1]
+                    if test "$five_hour" -ge 80 2>/dev/null
+                        set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
+                    else if test "$five_hour" -ge 50 2>/dev/null
+                        set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
+                    else
+                        set segment (set_color brblue)$icon_codex(set_color normal)" "(set_color green)$five_hour"%"(set_color normal)
+                    end
                 end
 
-                set -a parts $segment
+                if test -n "$segment"
+                    set -a parts $segment
+                end
 
             case gemini
                 # data format: "TOKEN_COUNT MSG_COUNT"
