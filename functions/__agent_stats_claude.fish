@@ -237,6 +237,40 @@ function __agent_stats_claude_compact
         set_color normal
     end
 
+    # Inline today's cost estimate if rates are available
+    if test (count $agent_stats_cost_rates) -gt 0
+        set -l today (date +%Y-%m-%d)
+        set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
+        if test -n "$jsonl_files"
+            set -l today_cost 0
+            set -l model_data (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r --arg today $today '
+                [.[] | select(.timestamp[:10] == $today)] |
+                group_by(.message.id) | map(last) |
+                group_by(.message.model) |
+                map({
+                    model: .[0].message.model,
+                    input: ([.[].message.usage.input_tokens] | add),
+                    output: ([.[].message.usage.output_tokens] | add),
+                    cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
+                }) | .[] | "\(.model) \(.input) \(.output) \(.cache)"
+            ' 2>/dev/null)
+            for line in $model_data
+                set -l p (string split " " $line)
+                set -l mn (string replace "claude-" "" -- $p[1] | string replace -- "-thinking" "")
+                set -l cost (__agent_stats_cost claude $mn $p[2] $p[3] $p[4])
+                if test $status -eq 0 -a -n "$cost"
+                    set today_cost (math "$today_cost + $cost")
+                end
+            end
+            if test "$today_cost" != 0
+                printf " "
+                set_color brgreen
+                printf "~%s" (__agent_stats_format cost $today_cost)
+                set_color normal
+            end
+        end
+    end
+
     echo
 end
 

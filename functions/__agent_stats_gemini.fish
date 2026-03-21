@@ -172,6 +172,36 @@ function __agent_stats_gemini_compact
                 printf " · %s" $today_model
                 set_color normal
             end
+
+            # Inline today's cost estimate if rates are available
+            if test (count $agent_stats_cost_rates) -gt 0; and test -n "$chat_files"
+                set -l today_cost 0
+                set -l cost_data (jq -s -r --arg today $today '
+                    [.[] | select(.startTime[:10] == $today) | .messages[] | select(.tokens and .model)] |
+                    group_by(.model) |
+                    map({
+                        model: .[0].model,
+                        input: ([.[].tokens.input // 0] | add),
+                        output: (([.[].tokens.output // 0] | add) + ([.[].tokens.thoughts // 0] | add)),
+                        cached: ([.[].tokens.cached // 0] | add)
+                    }) | .[] | "\(.model) \(.input) \(.output) \(.cached)"
+                ' $chat_files 2>/dev/null)
+
+                for line in $cost_data
+                    set -l cp (string split " " $line)
+                    set -l cost (__agent_stats_cost gemini $cp[1] $cp[2] $cp[3] $cp[4])
+                    if test $status -eq 0 -a -n "$cost"
+                        set today_cost (math "$today_cost + $cost")
+                    end
+                end
+
+                if test "$today_cost" != 0
+                    printf " "
+                    set_color brgreen
+                    printf "~%s" (__agent_stats_format cost $today_cost)
+                    set_color normal
+                end
+            end
         end
     end
     echo

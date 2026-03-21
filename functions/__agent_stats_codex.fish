@@ -242,6 +242,40 @@ function __agent_stats_codex_compact
         set_color normal
     end
 
+    # Inline today's cost estimate if rates are available
+    if test (count $agent_stats_cost_rates) -gt 0
+        set -l today (date +%Y-%m-%d)
+        set -l today_cost 0
+        set -l today_files (find $sessions_dir -name '*.jsonl' -newermt "1 day ago" 2>/dev/null)
+        for f in $today_files
+            set -l date_match (string match -r '(\d{4})/(\d{2})/(\d{2})' $f)
+            if test (count $date_match) -ge 4
+                set -l date_str "$date_match[2]-$date_match[3]-$date_match[4]"
+                if test "$date_str" = "$today"
+                    set -l tok_line (grep '"token_count"' $f 2>/dev/null | tail -1 | jq -r '
+                        .payload.info.total_token_usage // empty |
+                        "\(.input_tokens // 0) \(.output_tokens // 0) \(.cached_input_tokens // 0) \(.reasoning_output_tokens // 0)"
+                    ' 2>/dev/null)
+                    if test -n "$tok_line"
+                        set -l tp (string split " " $tok_line)
+                        set -l sm (grep '"turn_context"' $f 2>/dev/null | tail -1 | jq -r '.payload.model // ""' 2>/dev/null)
+                        test -z "$sm"; and set sm unknown
+                        set -l cost (__agent_stats_cost codex $sm $tp[1] $tp[2] $tp[3] $tp[4])
+                        if test $status -eq 0 -a -n "$cost"
+                            set today_cost (math "$today_cost + $cost")
+                        end
+                    end
+                end
+            end
+        end
+        if test "$today_cost" != 0
+            printf " "
+            set_color brgreen
+            printf "~%s" (__agent_stats_format cost $today_cost)
+            set_color normal
+        end
+    end
+
     echo
 end
 
