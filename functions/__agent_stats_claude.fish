@@ -22,16 +22,28 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
 
     set -l api_result (__agent_stats_claude_api_fetch 5)
     if test -n "$api_result"
-        # Save last successful response for fallback
         echo $api_result >$last_good 2>/dev/null
         echo $api_result
         return 0
     end
 
-    # API failed — use last known good data if available
+    # Fallback 1: last known good API response
     if test -f $last_good
         cat $last_good
         return 0
+    end
+
+    # Fallback 2: claude-hud plugin cache (read-only, never written by us)
+    set -l hud_cache ~/.claude/plugins/claude-hud/.usage-cache.json
+    if test -f $hud_cache
+        set -l data (jq -r '
+            (.lastGoodData // .data) |
+            "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
+        ' $hud_cache 2>/dev/null)
+        if test -n "$data"
+            echo $data
+            return 0
+        end
     end
 
     echo "Unknown 0 0"
