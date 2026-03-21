@@ -13,9 +13,10 @@ fisher install .          # Install from local clone
 agent-stats refresh       # Clear cache and re-fetch (tests fresh fetch path)
 agent-stats -d            # Detailed mode (tests all formatting)
 rm /tmp/agent_stats_cache_*  # Force cold cache for testing first-run path
+fishtape tests/*.fish       # Run unit tests (requires fishtape: fisher install jorgebucaran/fishtape)
 ```
 
-No test suite exists. Manual testing against real provider data.
+Unit tests cover formatting, cost calculation, progress bar, color thresholds, auth detection, and reset time formatting. Provider integration still requires manual testing against real data.
 
 ## Architecture
 
