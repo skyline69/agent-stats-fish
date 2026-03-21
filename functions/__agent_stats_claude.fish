@@ -18,10 +18,19 @@ end
 
 function __agent_stats_claude_usage --description "Read usage data from OAuth API"
     # Called by the cache layer which handles TTL and stale-while-revalidate.
-    # No inner caching needed — the outer cache layer manages refresh timing.
+    set -l last_good /tmp/agent_stats_claude_last_good
+
     set -l api_result (__agent_stats_claude_api_fetch 5)
     if test -n "$api_result"
+        # Save last successful response for fallback
+        echo $api_result >$last_good 2>/dev/null
         echo $api_result
+        return 0
+    end
+
+    # API failed — use last known good data if available
+    if test -f $last_good
+        cat $last_good
         return 0
     end
 
