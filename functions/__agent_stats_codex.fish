@@ -17,7 +17,7 @@ function __agent_stats_codex --description "Codex data provider for agent-stats"
                 printf ": no session data"
                 set_color normal
                 echo
-            case detailed
+            case detailed cost
                 set_color brgreen --bold
                 printf "Codex"
                 set_color normal
@@ -36,6 +36,8 @@ function __agent_stats_codex --description "Codex data provider for agent-stats"
             __agent_stats_codex_compact $sessions_dir $history_file
         case detailed
             __agent_stats_codex_detailed $sessions_dir $history_file
+        case cost
+            __agent_stats_codex_cost $sessions_dir
     end
 end
 
@@ -378,4 +380,142 @@ function __agent_stats_codex_detailed
     set_color --dim
     printf "  All time: %s messages, %s sessions\n" (__agent_stats_format number $all_msgs) (__agent_stats_format number $all_session_files)
     set_color normal
+end
+
+function __agent_stats_codex_cost
+    set -l sessions_dir $argv[1]
+
+    # Header
+    set_color brgreen --bold
+    printf "Codex"
+    set_color normal
+    set_color --dim
+    printf " (7 day)\n"
+    set_color normal
+
+    # Extract model + tokens from recent session files
+    set -l session_data
+    set -l recent_files (find $sessions_dir -name '*.jsonl' -newermt "7 days ago" -exec grep -l '"token_count"' {} + 2>/dev/null)
+    for f in $recent_files
+        set -l tok_line (grep '"token_count"' $f | tail -1 | jq -r '
+            .payload.info.total_token_usage // empty |
+            "\(.input_tokens // 0) \(.output_tokens // 0) \(.cached_input_tokens // 0) \(.reasoning_output_tokens // 0)"
+        ' 2>/dev/null)
+        if test -n "$tok_line"
+            set -l session_model (grep '"turn_context"' $f 2>/dev/null | tail -1 | jq -r '.payload.model // ""' 2>/dev/null)
+            test -z "$session_model"; and set session_model unknown
+            set -a session_data "$session_model $tok_line"
+        end
+    end
+
+    if test -z "$session_data"
+        set_color --dim
+        printf "  No session data in the last 7 days\n"
+        set_color normal
+        return
+    end
+
+    # Group by model: aggregate input/output/cached/reasoning per model
+    set -l models
+    set -l model_in
+    set -l model_out
+    set -l model_cache
+    set -l model_think
+
+    for line in $session_data
+        set -l p (string split " " $line)
+        set -l m $p[1]
+        set -l idx 0
+
+        # Find existing model index
+        for i in (seq (count $models))
+            if test "$models[$i]" = "$m"
+                set idx $i
+                break
+            end
+        end
+
+        if test $idx -eq 0
+            set -a models $m
+            set -a model_in $p[2]
+            set -a model_out $p[3]
+            set -a model_cache $p[4]
+            set -a model_think $p[5]
+        else
+            set model_in[$idx] (math "$model_in[$idx] + $p[2]")
+            set model_out[$idx] (math "$model_out[$idx] + $p[3]")
+            set model_cache[$idx] (math "$model_cache[$idx] + $p[4]")
+            set model_think[$idx] (math "$model_think[$idx] + $p[5]")
+        end
+    end
+
+    set -l total_cost 0
+
+    for i in (seq (count $models))
+        set -l m $models[$i]
+        set -l input $model_in[$i]
+        set -l output $model_out[$i]
+        set -l cached $model_cache[$i]
+        set -l think $model_think[$i]
+
+        set -l cost (__agent_stats_cost codex $m $input $output $cached $think)
+        set -l cost_str "—"
+        if test $status -eq 0 -a -n "$cost"
+            set total_cost (math "$total_cost + $cost")
+            set cost_str (printf "~%s" (__agent_stats_format cost $cost))
+        end
+
+        printf "  "
+        set_color brgreen
+        printf "%-25s" $m
+        set_color normal
+        set_color --dim
+        printf " in:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $input)
+        set_color normal
+        set_color --dim
+        printf " out:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $output)
+        set_color normal
+        set_color --dim
+        printf " cache:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $cached)
+        set_color normal
+        if test "$think" -gt 0 2>/dev/null
+            set_color --dim
+            printf " think:"
+            set_color normal
+            set_color bryellow
+            printf "%7s" (__agent_stats_format tokens $think)
+            set_color normal
+        end
+        printf "  "
+        set_color brgreen
+        printf "%9s" $cost_str
+        set_color normal
+        echo
+    end
+
+    set_color --dim
+    printf "  ──────────────────────────────────────────────────────────────────\n"
+    set_color normal
+    printf "  "
+    set_color --bold
+    printf "%-25s" "Total"
+    set_color normal
+    printf "%33s  "
+    set_color brgreen --bold
+    if test "$total_cost" != 0
+        printf "%9s" (printf "~%s" (__agent_stats_format cost $total_cost))
+    else
+        printf "%9s" "—"
+    end
+    set_color normal
+    echo
 end

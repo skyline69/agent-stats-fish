@@ -53,6 +53,8 @@ agent-stats enable <provider> # Enable a provider (claude, codex, gemini)
 agent-stats disable <provider> # Disable a provider
 agent-stats providers        # List enabled providers
 agent-stats refresh          # Clear cache and re-fetch
+agent-stats cost             # Show estimated API costs for all providers
+agent-stats cost <provider>  # Show costs for a specific provider
 agent-stats -h, --help       # Show help
 ```
 
@@ -98,6 +100,8 @@ All settings are Fish universal variables that persist across sessions.
 | `agent_stats_cache_ttl` | `300` | Cache lifetime in seconds for compact/detailed modes |
 | `agent_stats_prompt_cache_ttl` | `30` | Cache lifetime in seconds for right-prompt |
 | `agent_stats_icons` | `claude= codex=⬡ gemini=󰫣` | Per-provider icons (Nerd Font glyphs) |
+| `agent_stats_cost_rates` | *(empty)* | Per-model token rates for cost estimation |
+| `agent_stats_cost_currency` | `USD` | Currency code for cost display |
 
 ### Customizing Icons
 
@@ -128,6 +132,38 @@ right_format = """$custom"""
 ```
 
 The `agent-stats` and `agent-stats -d` commands work normally regardless of prompt framework.
+
+### Cost Estimation
+
+Show estimated API-equivalent costs with `agent-stats cost`. The plugin ships with default rates for common model families. Per-model token breakdowns and totals are shown.
+
+```
+$ agent-stats cost
+Claude (all time)
+  sonnet-4-5           in:  5.5M  out: 22.6K  cache: 31.4M   ~$26.13
+  opus-4-6             in:  4.7K  out:  194K   cache: 34.6M   ~$52.00
+  ──────────────────────────────────────────────────────────────────
+  Total                                                        ~$78.13
+```
+
+Default rates use short prefixes (e.g., `claude:sonnet-4`) to match model families broadly via **prefix matching**. Override or extend with:
+
+```fish
+set -U agent_stats_cost_rates \
+    claude:sonnet-4:in=3 claude:sonnet-4:out=15 claude:sonnet-4:cache=0.30 \
+    claude:opus-4:in=15 claude:opus-4:out=75 claude:opus-4:cache=1.50 \
+    claude:haiku-4:in=0.80 claude:haiku-4:out=4 claude:haiku-4:cache=0.08 \
+    codex:gpt-5:in=2.50 codex:gpt-5:out=10 codex:gpt-5:think=10 \
+    gemini:gemini-2:in=1.25 gemini:gemini-2:out=10 gemini:gemini-2:think=10
+```
+
+Rates are per million tokens. Token types: `in`, `out`, `cache`, `think`. Check `agent-stats -d` for exact model names in your data.
+
+Set the currency with:
+
+```fish
+set -U agent_stats_cost_currency USD  # USD (default), EUR, GBP, JPY, or any string
+```
 
 ### Adjusting Cache TTL
 

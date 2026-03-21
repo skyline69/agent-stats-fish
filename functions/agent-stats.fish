@@ -47,6 +47,14 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
         printf "refresh"
         set_color normal
         printf "               Clear cache and re-display\n"
+        printf "  "
+        set_color brgreen
+        printf "cost"
+        set_color normal
+        set_color --dim
+        printf " [provider]"
+        set_color normal
+        printf "     Show estimated API costs\n"
         echo
 
         set_color --bold --underline
@@ -107,6 +115,24 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
         printf "             Provider icons "
         set_color --dim
         printf "(e.g. claude= codex=⬡ gemini=󰫣)"
+        set_color normal
+        echo
+        printf "  "
+        set_color brblue
+        printf "agent_stats_cost_rates"
+        set_color normal
+        printf "        Token rates per MTok "
+        set_color --dim
+        printf "(provider:model:type=rate)"
+        set_color normal
+        echo
+        printf "  "
+        set_color brblue
+        printf "agent_stats_cost_currency"
+        set_color normal
+        printf "     Currency code "
+        set_color --dim
+        printf "(default: USD)"
         set_color normal
         echo
         return 0
@@ -194,6 +220,33 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
                     rm -f $f 2>/dev/null
                 end
                 # Fall through to display
+
+            case cost
+                if test (count $agent_stats_cost_rates) -eq 0
+                    echo "No cost rates configured. Set rates with:" >&2
+                    echo "  "(set_color --dim)"set -U agent_stats_cost_rates claude:sonnet-4:in=3 claude:sonnet-4:out=15 ..."(set_color normal) >&2
+                    echo "See: "(set_color --underline)"agent-stats --help"(set_color normal) >&2
+                    return 1
+                end
+                if test (count $agent_stats_providers) -eq 0
+                    echo "No providers enabled. Use: "(set_color --underline)"agent-stats enable <claude|codex|gemini>"(set_color normal)
+                    return 0
+                end
+                set -l cost_providers $agent_stats_providers
+                if set -q argv[2]
+                    if not contains -- $argv[2] claude codex gemini
+                        echo (set_color brred)"error"(set_color normal)": unknown provider '"(set_color bryellow)$argv[2](set_color normal)"' (available: claude, codex, gemini)" >&2
+                        return 1
+                    end
+                    set cost_providers $argv[2]
+                end
+                for provider in $cost_providers
+                    __agent_stats_cache $provider cost
+                    if test $status -eq 130
+                        return 130
+                    end
+                end
+                return 0
 
             case '-*'
                 echo (set_color brred)"error"(set_color normal)": unknown option '"(set_color bryellow)$argv[1](set_color normal)"'. See "(set_color --underline)"agent-stats --help"(set_color normal) >&2

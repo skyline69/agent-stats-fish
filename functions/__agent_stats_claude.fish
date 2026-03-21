@@ -11,6 +11,8 @@ function __agent_stats_claude --description "Claude Code data provider for agent
             __agent_stats_claude_compact $usage_file
         case detailed
             __agent_stats_claude_detailed $usage_file
+        case cost
+            __agent_stats_claude_cost $usage_file
     end
 end
 
@@ -355,4 +357,100 @@ function __agent_stats_claude_detailed
     set_color --dim
     printf "  All time: %s messages, %s sessions\n" (__agent_stats_format number $all_msgs) (__agent_stats_format number $all_sess)
     set_color normal
+end
+
+function __agent_stats_claude_cost
+    set -l usage_file $argv[1]
+
+    set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
+    if test -z "$jsonl_files"
+        set_color --dim
+        printf "  No Claude data found\n"
+        set_color normal
+        return
+    end
+
+    # Header
+    set_color brblue --bold
+    printf "Claude"
+    set_color normal
+    set_color --dim
+    printf " (all time)\n"
+    set_color normal
+
+    # Per-model token data (same query as detailed mode)
+    set -l model_data (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r '
+        [.[] | select(.message.model | strings | startswith("claude-"))] |
+        group_by(.message.id) | map(last) |
+        group_by(.message.model) |
+        map({
+            model: .[0].message.model,
+            input: ([.[].message.usage.input_tokens] | add),
+            output: ([.[].message.usage.output_tokens] | add),
+            cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
+        }) | sort_by(.model) | .[] |
+        "\(.model) \(.input) \(.output) \(.cache)"
+    ' 2>/dev/null)
+
+    set -l total_cost 0
+
+    for line in $model_data
+        set -l p (string split " " $line)
+        set -l model_name (string replace "claude-" "" -- $p[1] | string replace -- "-thinking" "")
+        set -l input $p[2]
+        set -l output $p[3]
+        set -l cache $p[4]
+
+        set -l cost (__agent_stats_cost claude $model_name $input $output $cache)
+        set -l cost_str "—"
+        if test $status -eq 0 -a -n "$cost"
+            set total_cost (math "$total_cost + $cost")
+            set cost_str (printf "~%s" (__agent_stats_format cost $cost))
+        end
+
+        printf "  "
+        set_color brblue
+        printf "%-20s" $model_name
+        set_color normal
+        set_color --dim
+        printf " in:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $input)
+        set_color normal
+        set_color --dim
+        printf " out:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $output)
+        set_color normal
+        set_color --dim
+        printf " cache:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $cache)
+        set_color normal
+        printf "  "
+        set_color brgreen
+        printf "%9s" $cost_str
+        set_color normal
+        echo
+    end
+
+    set_color --dim
+    printf "  ──────────────────────────────────────────────────────────────────\n"
+    set_color normal
+    printf "  "
+    set_color --bold
+    printf "%-20s" "Total"
+    set_color normal
+    printf "%33s  "
+    set_color brgreen --bold
+    if test "$total_cost" != 0
+        printf "%9s" (printf "~%s" (__agent_stats_format cost $total_cost))
+    else
+        printf "%9s" "—"
+    end
+    set_color normal
+    echo
 end

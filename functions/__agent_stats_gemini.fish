@@ -16,7 +16,7 @@ function __agent_stats_gemini --description "Gemini CLI data provider for agent-
                 printf ": no data directory"
                 set_color normal
                 echo
-            case detailed
+            case detailed cost
                 set_color af5fff --bold
                 printf "Gemini"
                 set_color normal
@@ -37,6 +37,8 @@ function __agent_stats_gemini --description "Gemini CLI data provider for agent-
             __agent_stats_gemini_compact $gemini_dir $today
         case detailed
             __agent_stats_gemini_detailed $gemini_dir $today
+        case cost
+            __agent_stats_gemini_cost $gemini_dir
     end
 end
 
@@ -340,4 +342,109 @@ function __agent_stats_gemini_detailed
     set_color --dim
     printf "  All time: %s messages, %s sessions\n" (__agent_stats_format number $all_msgs) (__agent_stats_format number $all_sess)
     set_color normal
+end
+
+function __agent_stats_gemini_cost
+    set -l gemini_dir $argv[1]
+
+    set -l chat_files (find $gemini_dir -name 'session-*.json' 2>/dev/null)
+    if test -z "$chat_files"
+        set_color --dim
+        printf "  No Gemini data found\n"
+        set_color normal
+        return
+    end
+
+    # Header
+    set_color af5fff --bold
+    printf "Gemini"
+    set_color normal
+    set_color --dim
+    printf " (all time)\n"
+    set_color normal
+
+    # Per-model token data (same query as detailed mode)
+    set -l model_data (cat $chat_files 2>/dev/null | jq -s -r '
+        [.[] | .messages[] | select(.tokens and .model)] |
+        group_by(.model) |
+        map({
+            model: .[0].model,
+            input: ([.[].tokens.input // 0] | add),
+            output: ([.[].tokens.output // 0] | add),
+            cached: ([.[].tokens.cached // 0] | add),
+            thoughts: ([.[].tokens.thoughts // 0] | add)
+        }) | sort_by(.model) | .[] |
+        "\(.model) \(.input) \(.output) \(.cached) \(.thoughts)"
+    ' 2>/dev/null)
+
+    set -l total_cost 0
+
+    for line in $model_data
+        set -l p (string split " " $line)
+        set -l model $p[1]
+        set -l input $p[2]
+        set -l output $p[3]
+        set -l cached $p[4]
+        set -l thoughts $p[5]
+
+        set -l cost (__agent_stats_cost gemini $model $input $output $cached $thoughts)
+        set -l cost_str "—"
+        if test $status -eq 0 -a -n "$cost"
+            set total_cost (math "$total_cost + $cost")
+            set cost_str (printf "~%s" (__agent_stats_format cost $cost))
+        end
+
+        printf "  "
+        set_color af5fff
+        printf "%-25s" $model
+        set_color normal
+        set_color --dim
+        printf " in:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $input)
+        set_color normal
+        set_color --dim
+        printf " out:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $output)
+        set_color normal
+        set_color --dim
+        printf " cache:"
+        set_color normal
+        set_color bryellow
+        printf "%7s" (__agent_stats_format tokens $cached)
+        set_color normal
+        if test "$thoughts" -gt 0 2>/dev/null
+            set_color --dim
+            printf " think:"
+            set_color normal
+            set_color bryellow
+            printf "%7s" (__agent_stats_format tokens $thoughts)
+            set_color normal
+        end
+        printf "  "
+        set_color brgreen
+        printf "%9s" $cost_str
+        set_color normal
+        echo
+    end
+
+    set_color --dim
+    printf "  ──────────────────────────────────────────────────────────────────\n"
+    set_color normal
+    printf "  "
+    set_color --bold
+    printf "%-25s" "Total"
+    set_color normal
+    printf "%33s  "
+    set_color brgreen --bold
+    if test "$total_cost" != 0
+        printf "%9s" (printf "~%s" (__agent_stats_format cost $total_cost))
+    else
+        printf "%9s" "—"
+    end
+    set_color normal
+    echo
 end
