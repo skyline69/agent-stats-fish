@@ -316,16 +316,48 @@ function __agent_stats_claude_detailed
     set -l seven_days_ago (date -v-7d +%Y-%m-%d 2>/dev/null; or date -d "7 days ago" +%Y-%m-%d)
     set -l today (date +%Y-%m-%d)
 
-    # Daily activity table (7 days) — assistant tokens
-    set -l daily_tokens (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r --arg since $seven_days_ago '
-        [.[] | select(.timestamp[:10] >= $since)] |
+    # Single grep pass for both daily tokens and model usage
+    set -l assistant_data (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r --arg since $seven_days_ago '
+        # Deduplicate by message id
+        [.[] | select(.message.model | strings | startswith("claude-"))] |
         group_by(.message.id) | map(last) |
-        group_by(.timestamp[:10]) |
-        map({
-            date: .[0].timestamp[:10],
-            tokens: ([.[].message.usage | (.input_tokens + .output_tokens + (.cache_read_input_tokens // 0))] | add)
-        }) | sort_by(.date) | .[] | "\(.date) \(.tokens)"
+
+        # Daily tokens (last 7 days)
+        ([.[] | select(.timestamp[:10] >= $since)] |
+            group_by(.timestamp[:10]) |
+            map({
+                date: .[0].timestamp[:10],
+                tokens: ([.[].message.usage | (.input_tokens + .output_tokens + (.cache_read_input_tokens // 0))] | add)
+            }) | sort_by(.date) | .[] | "\(.date) \(.tokens)"),
+
+        "---",
+
+        # Per-model usage (all time)
+        (group_by(.message.model) |
+            map({
+                model: .[0].message.model,
+                input: ([.[].message.usage.input_tokens] | add),
+                output: ([.[].message.usage.output_tokens] | add),
+                cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
+            }) | sort_by(.model) | .[] |
+            "\(.model) \(.input) \(.output) \(.cache)")
     ' 2>/dev/null)
+
+    # Split on separator
+    set -l daily_tokens
+    set -l model_data
+    set -l in_models false
+    for line in $assistant_data
+        if test "$line" = "---"
+            set in_models true
+            continue
+        end
+        if test "$in_models" = true
+            set -a model_data $line
+        else
+            set -a daily_tokens $line
+        end
+    end
 
     # Daily activity — user messages and sessions
     set -l daily_users (grep -h '"type":"user"' $jsonl_files 2>/dev/null | jq -s -r --arg since $seven_days_ago '
@@ -421,19 +453,6 @@ function __agent_stats_claude_detailed
     set_color --bold
     printf "Model Usage (all time)\n"
     set_color normal
-
-    set -l model_data (grep -h '"type":"assistant"' $jsonl_files 2>/dev/null | grep '"usage"' | jq -s -r '
-        [.[] | select(.message.model | strings | startswith("claude-"))] |
-        group_by(.message.id) | map(last) |
-        group_by(.message.model) |
-        map({
-            model: .[0].message.model,
-            input: ([.[].message.usage.input_tokens] | add),
-            output: ([.[].message.usage.output_tokens] | add),
-            cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
-        }) | sort_by(.model) | .[] |
-        "\(.model) \(.input) \(.output) \(.cache)"
-    ' 2>/dev/null)
 
     for line in $model_data
         set -l p (string split " " $line)

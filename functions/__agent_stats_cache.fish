@@ -14,12 +14,11 @@ function __agent_stats_cache --description "Cache layer for agent-stats provider
 
     set -l cache_file /tmp/agent_stats_cache_{$provider}_{$mode}
 
-    # Check if cache exists
+    # Check if cache exists — use builtins to avoid forking date/stat
     if test -f $cache_file
-        set -l now (date +%s)
-        set -l mtime (stat -c %Y $cache_file 2>/dev/null; or stat -f %m $cache_file 2>/dev/null)
+        set -l mtime (path mtime -- $cache_file 2>/dev/null)
         if test -n "$mtime"
-            set -l age (math "$now - $mtime")
+            set -l age (math "$EPOCHSECONDS - $mtime")
 
             # Fresh cache — return immediately
             if test "$age" -lt "$ttl"

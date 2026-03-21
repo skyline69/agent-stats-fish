@@ -64,28 +64,3 @@ function __agent_stats_cost --description "Calculate token cost for a provider/m
 
     echo $cost
 end
-
-function __agent_stats_cost_total --description "Sum costs across model data lines"
-    # Usage: __agent_stats_cost_total <provider> <lines...>
-    # Each line: "model input output cache [think]"
-    # Returns total cost as decimal
-
-    set -l provider $argv[1]
-    set -l total 0
-
-    for line in $argv[2..-1]
-        set -l p (string split " " $line)
-        set -l model $p[1]
-        set -l input $p[2]
-        set -l output $p[3]
-        set -l cache $p[4]
-        set -l think $p[5]
-
-        set -l cost (__agent_stats_cost $provider $model $input $output $cache $think)
-        if test $status -eq 0 -a -n "$cost"
-            set total (math "$total + $cost")
-        end
-    end
-
-    echo $total
-end

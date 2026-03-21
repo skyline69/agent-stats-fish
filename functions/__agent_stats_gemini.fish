@@ -53,13 +53,13 @@ function __agent_stats_gemini_prompt
         return
     end
 
-    set -l result (cat $chat_files 2>/dev/null | jq -s -r --arg today $today '
+    set -l result (jq -s -r --arg today $today '
         [.[] | select(.startTime[:10] == $today)] |
         {
             tokens: ([.[].messages[] | select(.tokens) | .tokens.total // 0] | add // 0),
             msgs: ([.[].messages[] | select(.type == "user")] | length)
         } | "\(.tokens) \(.msgs)"
-    ' 2>/dev/null)
+    ' $chat_files 2>/dev/null)
 
     if test -n "$result"
         echo $result
@@ -79,14 +79,14 @@ function __agent_stats_gemini_compact
     set -l today_model ""
 
     if test -n "$chat_files"
-        set -l compact_data (cat $chat_files 2>/dev/null | jq -s -r --arg today $today '
+        set -l compact_data (jq -s -r --arg today $today '
             [.[] | select(.startTime[:10] == $today)] |
             {
                 tokens: ([.[].messages[] | select(.tokens) | .tokens.total // 0] | add // 0),
                 msgs: ([.[].messages[] | select(.type == "user")] | length),
                 model: ([.[].messages[] | select(.model) | .model] | last // "")
             } | "\(.tokens) \(.msgs) \(.model)"
-        ' 2>/dev/null)
+        ' $chat_files 2>/dev/null)
         if test -n "$compact_data"
             set -l p (string split " " $compact_data)
             set today_tokens $p[1]
@@ -128,7 +128,7 @@ function __agent_stats_gemini_compact
             # Calculate today's cost
             if test -n "$chat_files"
                 set -l today_cost 0
-                set -l cost_data (cat $chat_files 2>/dev/null | jq -s -r --arg today $today '
+                set -l cost_data (jq -s -r --arg today $today '
                     [.[] | select(.startTime[:10] == $today) | .messages[] | select(.tokens and .model)] |
                     group_by(.model) |
                     map({
@@ -137,7 +137,7 @@ function __agent_stats_gemini_compact
                         output: (([.[].tokens.output // 0] | add) + ([.[].tokens.thoughts // 0] | add)),
                         cached: ([.[].tokens.cached // 0] | add)
                     }) | .[] | "\(.model) \(.input) \(.output) \(.cached)"
-                ' 2>/dev/null)
+                ' $chat_files 2>/dev/null)
 
                 for line in $cost_data
                     set -l cp (string split " " $line)
@@ -197,7 +197,7 @@ function __agent_stats_gemini_detailed
     # Get daily message/session data from logs.json
     set -l daily_data
     if test "$has_logs" = true
-        set daily_data (cat $log_files 2>/dev/null | jq -s -r --arg since $seven_days_ago '
+        set daily_data (jq -s -r --arg since $seven_days_ago '
             add // [] |
             [.[] | select(.type == "user" and (.timestamp[:10] >= $since))] |
             group_by(.timestamp[:10]) |
@@ -209,14 +209,14 @@ function __agent_stats_gemini_detailed
             sort_by(.date) |
             .[] |
             "\(.date) \(.messages) \(.sessions)"
-        ' 2>/dev/null)
+        ' $log_files 2>/dev/null)
     end
 
     # Get daily token data from chats/session-*.json
     set -l chat_files (find $gemini_dir -name 'session-*.json' 2>/dev/null)
     set -l daily_tokens
     if test -n "$chat_files"
-        set daily_tokens (cat $chat_files 2>/dev/null | jq -s -r --arg since $seven_days_ago '
+        set daily_tokens (jq -s -r --arg since $seven_days_ago '
             [.[] | select(.startTime[:10] >= $since) |
                 {date: .startTime[:10], tokens: [.messages[]? | select(.tokens) | .tokens.total // 0] | add // 0}
             ] |
@@ -224,7 +224,7 @@ function __agent_stats_gemini_detailed
             map({date: .[0].date, tokens: ([.[].tokens] | add // 0)}) |
             .[] |
             "\(.date) \(.tokens)"
-        ' 2>/dev/null)
+        ' $chat_files 2>/dev/null)
     end
 
     echo
@@ -318,7 +318,7 @@ function __agent_stats_gemini_detailed
         printf "Model Usage (all time)\n"
         set_color normal
 
-        set -l model_data (cat $chat_files 2>/dev/null | jq -s -r '
+        set -l model_data (jq -s -r '
             [.[] | .messages[] | select(.tokens and .model)] |
             group_by(.model) |
             map({
@@ -329,7 +329,7 @@ function __agent_stats_gemini_detailed
                 thoughts: ([.[].tokens.thoughts // 0] | add)
             }) | sort_by(.model) | .[] |
             "\(.model) \(.input) \(.output) \(.cached) \(.thoughts)"
-        ' 2>/dev/null)
+        ' $chat_files 2>/dev/null)
 
         for line in $model_data
             set -l p (string split " " $line)
@@ -378,11 +378,11 @@ function __agent_stats_gemini_detailed
     set -l all_msgs 0
     set -l all_sess 0
     if test "$has_logs" = true
-        set -l all_stats (cat $log_files 2>/dev/null | jq -s -r '
+        set -l all_stats (jq -s -r '
             add // [] |
             [.[] | select(.type == "user")] |
             "\(length) \([.[].sessionId] | unique | length)"
-        ' 2>/dev/null)
+        ' $log_files 2>/dev/null)
         if test -n "$all_stats"
             set -l ap (string split " " $all_stats)
             set all_msgs $ap[1]
@@ -414,7 +414,7 @@ function __agent_stats_gemini_cost
     set_color normal
 
     # Per-model token data (same query as detailed mode)
-    set -l model_data (cat $chat_files 2>/dev/null | jq -s -r '
+    set -l model_data (jq -s -r '
         [.[] | .messages[] | select(.tokens and .model)] |
         group_by(.model) |
         map({
@@ -425,7 +425,7 @@ function __agent_stats_gemini_cost
             thoughts: ([.[].tokens.thoughts // 0] | add)
         }) | sort_by(.model) | .[] |
         "\(.model) \(.input) \(.output) \(.cached) \(.thoughts)"
-    ' 2>/dev/null)
+    ' $chat_files 2>/dev/null)
 
     set -l total_cost 0
 
