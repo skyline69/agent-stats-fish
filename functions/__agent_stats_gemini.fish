@@ -140,7 +140,7 @@ function __agent_stats_gemini_detailed
         set has_logs true
     end
 
-    set -l seven_days_ago (date -d "7 days ago" +%Y-%m-%d)
+    set -l seven_days_ago (date -v-7d +%Y-%m-%d 2>/dev/null; or date -d "7 days ago" +%Y-%m-%d)
 
     # Get daily message/session data from logs.json
     set -l daily_data

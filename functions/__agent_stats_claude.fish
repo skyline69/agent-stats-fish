@@ -192,7 +192,7 @@ function __agent_stats_claude_detailed
         return
     end
 
-    set -l seven_days_ago (date -d "7 days ago" +%Y-%m-%d)
+    set -l seven_days_ago (date -v-7d +%Y-%m-%d 2>/dev/null; or date -d "7 days ago" +%Y-%m-%d)
     set -l today (date +%Y-%m-%d)
 
     # Daily activity table (7 days) — assistant tokens
@@ -348,7 +348,7 @@ function __agent_stats_claude_detailed
 
     # All-time totals
     echo
-    set -l all_msgs (grep -ch '"type":"user"' $jsonl_files 2>/dev/null | paste -sd+ | bc 2>/dev/null)
+    set -l all_msgs (grep -ch '"type":"user"' $jsonl_files 2>/dev/null | awk '{s+=$1} END {print s+0}')
     test -z "$all_msgs"; and set all_msgs 0
     set -l all_sess (grep -h '"type":"user"' $jsonl_files 2>/dev/null | jq -r '.sessionId' 2>/dev/null | sort -u | wc -l | string trim)
     test -z "$all_sess"; and set all_sess 0

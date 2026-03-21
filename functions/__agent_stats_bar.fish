@@ -10,11 +10,15 @@ function __agent_stats_bar --description "Render a 10-char progress bar with col
     __agent_stats_usage_color $percent
 
     set -l bar ""
-    for i in (seq 1 $filled)
-        set bar $bar"█"
+    if test $filled -gt 0
+        for i in (seq 1 $filled)
+            set bar $bar"█"
+        end
     end
-    for i in (seq 1 $empty)
-        set bar $bar"░"
+    if test $empty -gt 0
+        for i in (seq 1 $empty)
+            set bar $bar"░"
+        end
     end
     printf "%s" $bar
     set_color normal

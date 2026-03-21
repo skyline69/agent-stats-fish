@@ -45,7 +45,7 @@ function __agent_stats_codex_rate_limits --description "Get rate limits from mos
     set -l sessions_dir $argv[1]
 
     # Find most recent session file
-    set -l latest (find $sessions_dir -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    set -l latest (begin; find $sessions_dir -name '*.jsonl' -exec stat -f '%m %N' {} + 2>/dev/null; or find $sessions_dir -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null; end | sort -n | tail -1 | cut -d' ' -f2-)
     if test -z "$latest"
         echo "Unknown 0 0"
         return 1
@@ -220,7 +220,7 @@ function __agent_stats_codex_detailed
     # Daily messages/sessions from history.jsonl
     set -l daily_hist
     if test -f $history_file
-        set -l seven_days_ago_epoch (date -d "7 days ago" +%s)
+        set -l seven_days_ago_epoch (date -v-7d +%s 2>/dev/null; or date -d "7 days ago" +%s)
         set daily_hist (tail -2000 $history_file | jq -s -r --argjson since $seven_days_ago_epoch '
             [.[] | select(.ts >= $since)]
             | group_by(.ts | strftime("%Y-%m-%d"))

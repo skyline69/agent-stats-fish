@@ -9,7 +9,11 @@ function __agent_stats_reset_fmt --description "Format reset time as relative du
     if string match -qr '^\d+$' -- "$reset_at"
         set reset_epoch $reset_at
     else
-        set reset_epoch (date -d "$reset_at" +%s 2>/dev/null)
+        # macOS: try -jf with common ISO formats; Linux: fall back to date -d
+        set reset_epoch (date -jf "%Y-%m-%dT%H:%M:%S%z" "$reset_at" +%s 2>/dev/null
+                         or date -jf "%Y-%m-%dT%H:%M:%SZ" "$reset_at" +%s 2>/dev/null
+                         or date -jf "%Y-%m-%dT%H:%M:%S" "$reset_at" +%s 2>/dev/null
+                         or date -d "$reset_at" +%s 2>/dev/null)
     end
     if test -z "$reset_epoch"
         return
