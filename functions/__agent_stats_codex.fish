@@ -348,6 +348,49 @@ function __agent_stats_codex_detailed
     end
     echo
 
+    # Current session stats
+    set -l latest_session (begin; find $sessions_dir -name '*.jsonl' -exec stat -f '%m %N' {} + 2>/dev/null; or find $sessions_dir -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null; end | sort -n | tail -1 | cut -d' ' -f2-)
+    if test -n "$latest_session"
+        set -l sess_tok (grep '"token_count"' $latest_session 2>/dev/null | tail -1 | jq -r '
+            .payload.info.total_token_usage // empty |
+            "\((.input_tokens // 0) + (.output_tokens // 0)) \(.input_tokens // 0) \(.output_tokens // 0) \(.cached_input_tokens // 0) \(.reasoning_output_tokens // 0)"
+        ' 2>/dev/null)
+        set -l sess_turns (grep -c '"turn_context"' $latest_session 2>/dev/null; or echo 0)
+        if test -n "$sess_tok"
+            set -l sp (string split " " $sess_tok)
+            echo
+            set_color --bold
+            printf "  Session"
+            set_color normal
+            set_color --dim
+            printf ": "
+            set_color normal
+            set_color bryellow
+            printf "%s" (__agent_stats_format tokens $sp[1])
+            set_color normal
+            set_color --dim
+            printf " tokens"
+            set_color normal
+            printf ", "
+            set_color bryellow
+            printf "%s" $sess_turns
+            set_color normal
+            printf " turns"
+            if test (count $agent_stats_cost_rates) -gt 0
+                set -l sm (grep '"turn_context"' $latest_session 2>/dev/null | tail -1 | jq -r '.payload.model // ""' 2>/dev/null)
+                test -z "$sm"; and set sm unknown
+                set -l cost (__agent_stats_cost codex $sm $sp[2] $sp[3] $sp[4] $sp[5])
+                if test $status -eq 0 -a -n "$cost"; and test "$cost" != 0
+                    printf " "
+                    set_color brgreen
+                    printf "~%s" (__agent_stats_format cost $cost)
+                    set_color normal
+                end
+            end
+            echo
+        end
+    end
+
     # --- Daily breakdown (7 days) ---
 
     # Daily messages/sessions from history.jsonl

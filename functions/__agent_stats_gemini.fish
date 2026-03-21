@@ -222,6 +222,71 @@ function __agent_stats_gemini_detailed
         set has_logs true
     end
 
+    # Current session stats — most recent session file
+    set -l chat_files (find $gemini_dir -name 'session-*.json' 2>/dev/null)
+    if test -n "$chat_files"
+        set -l latest_chat (find $gemini_dir -name 'session-*.json' -printf '%T@ %p\n' 2>/dev/null; or find $gemini_dir -name 'session-*.json' -exec stat -f '%m %N' {} + 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+        if test -n "$latest_chat"
+            set latest_chat (echo $latest_chat | sort -n | tail -1 | cut -d' ' -f2-)
+            set -l sess_data (jq -r '
+                {
+                    tokens: ([.messages[]? | select(.tokens) | .tokens.total // 0] | add // 0),
+                    msgs: ([.messages[]? | select(.type == "user")] | length)
+                } | "\(.tokens) \(.msgs)"
+            ' $latest_chat 2>/dev/null)
+            if test -n "$sess_data"
+                set -l sp (string split " " $sess_data)
+                if test "$sp[1]" -gt 0 2>/dev/null
+                    set_color --bold
+                    printf "  Session"
+                    set_color normal
+                    set_color --dim
+                    printf ": "
+                    set_color normal
+                    set_color bryellow
+                    printf "%s" (__agent_stats_format tokens $sp[1])
+                    set_color normal
+                    set_color --dim
+                    printf " tokens"
+                    set_color normal
+                    printf ", "
+                    set_color bryellow
+                    printf "%s" $sp[2]
+                    set_color normal
+                    printf " msgs"
+
+                    if test (count $agent_stats_cost_rates) -gt 0
+                        set -l sess_cost_data (jq -r '
+                            [.messages[] | select(.tokens and .model)] |
+                            group_by(.model) |
+                            map({
+                                model: .[0].model,
+                                input: ([.[].tokens.input // 0] | add),
+                                output: (([.[].tokens.output // 0] | add) + ([.[].tokens.thoughts // 0] | add)),
+                                cached: ([.[].tokens.cached // 0] | add)
+                            }) | .[] | "\(.model) \(.input) \(.output) \(.cached)"
+                        ' $latest_chat 2>/dev/null)
+                        set -l sess_cost 0
+                        for line in $sess_cost_data
+                            set -l cp (string split " " $line)
+                            set -l cost (__agent_stats_cost gemini $cp[1] $cp[2] $cp[3] $cp[4])
+                            if test $status -eq 0 -a -n "$cost"
+                                set sess_cost (math "$sess_cost + $cost")
+                            end
+                        end
+                        if test "$sess_cost" != 0
+                            printf " "
+                            set_color brgreen
+                            printf "~%s" (__agent_stats_format cost $sess_cost)
+                            set_color normal
+                        end
+                    end
+                    echo
+                end
+            end
+        end
+    end
+
     set -l seven_days_ago (date -v-7d +%Y-%m-%d 2>/dev/null; or date -d "7 days ago" +%Y-%m-%d)
 
     # Get daily message/session data from logs.json

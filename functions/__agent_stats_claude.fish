@@ -336,6 +336,71 @@ function __agent_stats_claude_detailed
         return
     end
 
+    # Current session stats — most recently modified JSONL file
+    set -l current_session (find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null; or find ~/.claude/projects -name '*.jsonl' -exec stat -f '%m %N' {} + 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    if test -n "$current_session"
+        set current_session (echo $current_session | sort -n | tail -1 | cut -d' ' -f2-)
+        set -l sess_data (grep '"type":"assistant"' $current_session 2>/dev/null | grep '"usage"' | jq -s -r '
+            group_by(.message.id) | map(last) |
+            {
+                tokens: ([.[].message.usage | (.input_tokens + .output_tokens + (.cache_read_input_tokens // 0))] | add // 0),
+                msgs: length
+            } | "\(.tokens) \(.msgs)"
+        ' 2>/dev/null)
+        set -l sess_msgs (grep -c '"type":"user"' $current_session 2>/dev/null; or echo 0)
+        if test -n "$sess_data"
+            set -l sp (string split " " $sess_data)
+            echo
+            set_color --bold
+            printf "  Session"
+            set_color normal
+            set_color --dim
+            printf ": "
+            set_color normal
+            set_color bryellow
+            printf "%s" (__agent_stats_format tokens $sp[1])
+            set_color normal
+            set_color --dim
+            printf " tokens"
+            set_color normal
+            printf ", "
+            set_color bryellow
+            printf "%s" $sess_msgs
+            set_color normal
+            printf " msgs"
+
+            # Session cost
+            if test (count $agent_stats_cost_rates) -gt 0
+                set -l sess_cost_data (grep '"type":"assistant"' $current_session 2>/dev/null | grep '"usage"' | jq -s -r '
+                    group_by(.message.id) | map(last) |
+                    group_by(.message.model) |
+                    map({
+                        model: .[0].message.model,
+                        input: ([.[].message.usage.input_tokens] | add),
+                        output: ([.[].message.usage.output_tokens] | add),
+                        cache: ([.[].message.usage.cache_read_input_tokens // 0] | add)
+                    }) | .[] | "\(.model) \(.input) \(.output) \(.cache)"
+                ' 2>/dev/null)
+                set -l sess_cost 0
+                for line in $sess_cost_data
+                    set -l p (string split " " $line)
+                    set -l mn (string replace "claude-" "" -- $p[1] | string replace -- "-thinking" "")
+                    set -l cost (__agent_stats_cost claude $mn $p[2] $p[3] $p[4])
+                    if test $status -eq 0 -a -n "$cost"
+                        set sess_cost (math "$sess_cost + $cost")
+                    end
+                end
+                if test "$sess_cost" != 0
+                    printf " "
+                    set_color brgreen
+                    printf "~%s" (__agent_stats_format cost $sess_cost)
+                    set_color normal
+                end
+            end
+            echo
+        end
+    end
+
     set -l seven_days_ago (date -v-7d +%Y-%m-%d 2>/dev/null; or date -d "7 days ago" +%Y-%m-%d)
     set -l today (date +%Y-%m-%d)
 
