@@ -14,6 +14,9 @@ function __agent_stats_cache_refresh --description "Background cache refresh for
     end
 
     if test -n "$data"
-        printf '%s\n' $data >$cache_file 2>/dev/null
+        set -l tmp (mktemp $cache_file.XXXXXX 2>/dev/null)
+        and printf '%s\n' $data >$tmp 2>/dev/null
+        and command mv -f $tmp $cache_file 2>/dev/null
+        or rm -f $tmp 2>/dev/null
     end
 end

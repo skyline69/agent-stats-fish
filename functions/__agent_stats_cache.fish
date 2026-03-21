@@ -34,10 +34,16 @@ function __agent_stats_cache --description "Cache layer for agent-stats provider
         end
     end
 
-    # No cache at all — synchronous fetch (first run)
-    # Show a loading message for non-prompt modes
+    # No cache at all — for prompt mode, do async fetch to avoid blocking the prompt
+    if test "$mode" = prompt
+        __agent_stats_cache_refresh $provider $mode $cache_file &
+        disown 2>/dev/null
+        return 0
+    end
+
+    # Non-prompt: synchronous fetch (first run)
     set -l show_loading false
-    if test "$mode" != prompt; and isatty stderr
+    if isatty stderr
         set show_loading true
         function __agent_stats_cleanup --on-signal INT
             set -g __agent_stats_interrupted
@@ -78,7 +84,10 @@ function __agent_stats_cache --description "Cache layer for agent-stats provider
     end
 
     if test -n "$data"
-        printf '%s\n' $data >$cache_file 2>/dev/null
+        set -l tmp (mktemp $cache_file.XXXXXX 2>/dev/null)
+        and printf '%s\n' $data >$tmp 2>/dev/null
+        and command mv -f $tmp $cache_file 2>/dev/null
+        or rm -f $tmp 2>/dev/null
     end
     printf '%s\n' $data
 end
