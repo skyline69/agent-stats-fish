@@ -63,8 +63,8 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
 
     if test $status -eq 0 -a -n "$api_data"
-        set -l five_hour (echo $api_data | jq -r '(.five_hour.utilization // 0) * 100 | round' 2>/dev/null)
-        set -l seven_day (echo $api_data | jq -r '(.seven_day.utilization // 0) * 100 | round' 2>/dev/null)
+        set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0 | round' 2>/dev/null)
+        set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0 | round' 2>/dev/null)
         set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
         set -l seven_reset (echo $api_data | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
         echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
