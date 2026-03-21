@@ -20,25 +20,39 @@ end
 
 function __agent_stats_claude_usage --description "Read usage data from cache or API"
     set -l usage_file $argv[1]
+    set -l api_cache /tmp/agent_stats_claude_api_usage
 
-    # If HUD cache exists, return it immediately and refresh via API in background
+    # Check our own API cache first (written by background refresh)
+    if test -f $api_cache
+        set -l cached (cat $api_cache 2>/dev/null)
+        if test -n "$cached"
+            # Background refresh to keep it current
+            __agent_stats_claude_api_refresh &
+            disown 2>/dev/null
+            echo $cached
+            return 0
+        end
+    end
+
+    # Try HUD plugin's cache (populated by claude-hud plugin)
     if test -f $usage_file
         set -l data (jq -r '
             (.lastGoodData // .data) |
             "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
         ' $usage_file 2>/dev/null)
         if test -n "$data"
-            # Background API refresh to keep HUD cache fresh
-            __agent_stats_claude_api_refresh $usage_file &
+            # Background API refresh to populate our own cache
+            __agent_stats_claude_api_refresh &
             disown 2>/dev/null
             echo $data
             return 0
         end
     end
 
-    # No HUD cache: try live API synchronously (first-run cost, short timeout)
+    # No cache: try live API synchronously (first-run cost, short timeout)
     set -l api_result (__agent_stats_claude_api_fetch 2)
     if test -n "$api_result"
+        echo $api_result >$api_cache 2>/dev/null
         echo $api_result
         return 0
     end
@@ -79,14 +93,10 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
     return 1
 end
 
-function __agent_stats_claude_api_refresh --description "Background refresh: fetch API and update HUD cache"
-    set -l usage_file $argv[1]
+function __agent_stats_claude_api_refresh --description "Background refresh: fetch API and write to own cache"
     set -l result (__agent_stats_claude_api_fetch 5)
     if test -n "$result"
-        set -l parts (string split " " $result)
-        # Update HUD cache file so next read gets fresh data
-        printf '{"planName":"%s","fiveHour":%s,"sevenDay":%s,"fiveHourResetAt":"%s","sevenDayResetAt":"%s"}' \
-            $parts[1] $parts[2] $parts[3] $parts[4] $parts[5] >$usage_file 2>/dev/null
+        echo $result >/tmp/agent_stats_claude_api_usage 2>/dev/null
     end
 end
 
