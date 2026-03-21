@@ -16,24 +16,11 @@ end
 
 # --- Usage data helpers ---
 
-function __agent_stats_claude_usage --description "Read usage data from OAuth API with caching"
-    set -l api_cache /tmp/agent_stats_claude_api_usage
-
-    # Return cached API data immediately, refresh in background
-    if test -f $api_cache
-        set -l cached (cat $api_cache 2>/dev/null)
-        if test -n "$cached"
-            __agent_stats_claude_api_refresh &
-            disown 2>/dev/null
-            echo $cached
-            return 0
-        end
-    end
-
-    # No cache: try live API synchronously (first-run, 2s timeout)
-    set -l api_result (__agent_stats_claude_api_fetch 2)
+function __agent_stats_claude_usage --description "Read usage data from OAuth API"
+    # Called by the cache layer which handles TTL and stale-while-revalidate.
+    # No inner caching needed — the outer cache layer manages refresh timing.
+    set -l api_result (__agent_stats_claude_api_fetch 5)
     if test -n "$api_result"
-        echo $api_result >$api_cache 2>/dev/null
         echo $api_result
         return 0
     end
@@ -63,6 +50,9 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
 
     if test $status -eq 0 -a -n "$api_data"
+        # Skip error responses (rate limit, auth failure, etc.)
+        echo $api_data | jq -e '.error' >/dev/null 2>&1; and return 1
+
         set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0 | round' 2>/dev/null)
         set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0 | round' 2>/dev/null)
         set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
@@ -72,13 +62,6 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
     end
 
     return 1
-end
-
-function __agent_stats_claude_api_refresh --description "Background refresh: fetch API and write to own cache"
-    set -l result (__agent_stats_claude_api_fetch 5)
-    if test -n "$result"
-        echo $result >/tmp/agent_stats_claude_api_usage 2>/dev/null
-    end
 end
 
 # --- Output modes ---

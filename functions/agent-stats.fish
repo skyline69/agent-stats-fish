@@ -225,7 +225,7 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
                     echo (set_color brred)"error"(set_color normal)": takes no arguments" >&2
                     return 1
                 end
-                for f in /tmp/agent_stats_cache_* /tmp/agent_stats_claude_api_usage
+                for f in /tmp/agent_stats_cache_*
                     rm -f $f 2>/dev/null
                 end
                 set -e __agent_stats_auth_claude

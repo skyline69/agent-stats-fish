@@ -54,7 +54,7 @@ function _agent_stats_uninstall --on-event agent_stats_uninstall
     set -e __agent_stats_auth_claude
     set -e __agent_stats_auth_codex
     set -e __agent_stats_auth_gemini
-    for f in /tmp/agent_stats_cache_* /tmp/agent_stats_claude_api_usage
+    for f in /tmp/agent_stats_cache_*
         rm -f $f 2>/dev/null
     end
 end
