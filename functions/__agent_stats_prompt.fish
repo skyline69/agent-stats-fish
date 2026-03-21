@@ -41,8 +41,11 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
                     end
                 else
                     set -l five_hour $fields[1]
-                    if test "$five_hour" -ge 80 2>/dev/null
-                        set segment (set_color e8590c)$__agent_stats_icon_claude(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
+                    set -l alert (set -q agent_stats_alert_threshold; and echo $agent_stats_alert_threshold; or echo 80)
+                    set -l warn ""
+                    if test "$five_hour" -ge "$alert" 2>/dev/null
+                        set warn (set_color brred --bold)"⚠ "(set_color normal)
+                        set segment $warn(set_color e8590c)$__agent_stats_icon_claude(set_color normal)" "(set_color brred --bold)$five_hour"%"(set_color normal)
                     else if test "$five_hour" -ge 50 2>/dev/null
                         set segment (set_color e8590c)$__agent_stats_icon_claude(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
                     else
@@ -66,8 +69,9 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
                     end
                 else
                     set -l five_hour $fields[1]
-                    if test "$five_hour" -ge 80 2>/dev/null
-                        set segment (set_color brblue)$__agent_stats_icon_codex(set_color normal)" "(set_color brred)$five_hour"%"(set_color normal)
+                    set -l alert (set -q agent_stats_alert_threshold; and echo $agent_stats_alert_threshold; or echo 80)
+                    if test "$five_hour" -ge "$alert" 2>/dev/null
+                        set segment (set_color brred --bold)"⚠ "(set_color normal)(set_color brblue)$__agent_stats_icon_codex(set_color normal)" "(set_color brred --bold)$five_hour"%"(set_color normal)
                     else if test "$five_hour" -ge 50 2>/dev/null
                         set segment (set_color brblue)$__agent_stats_icon_codex(set_color normal)" "(set_color bryellow)$five_hour"%"(set_color normal)
                     else

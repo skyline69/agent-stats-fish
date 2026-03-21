@@ -144,6 +144,15 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
         printf "(default: USD)"
         set_color normal
         echo
+        printf "  "
+        set_color brblue
+        printf "agent_stats_alert_threshold"
+        set_color normal
+        printf "    Usage %% for ⚠ warning "
+        set_color --dim
+        printf "(default: 80)"
+        set_color normal
+        echo
         return 0
     end
 

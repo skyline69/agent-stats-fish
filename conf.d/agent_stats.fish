@@ -15,6 +15,9 @@ __agent_stats_default_rates
 if not set -q agent_stats_cost_currency
     set -U agent_stats_cost_currency USD
 end
+if not set -q agent_stats_alert_threshold
+    set -U agent_stats_alert_threshold 80
+end
 if not set -q agent_stats_icons
     set -U agent_stats_icons claude= codex=⬡ gemini=󰫣
 end
@@ -50,6 +53,7 @@ function _agent_stats_uninstall --on-event agent_stats_uninstall
     set -e agent_stats_cost_rates
     set -e agent_stats_cost_rates_custom
     set -e agent_stats_cost_currency
+    set -e agent_stats_alert_threshold
     set -e __agent_stats_rates_version
     set -e __agent_stats_auth_claude
     set -e __agent_stats_auth_codex
