@@ -1,8 +1,8 @@
 function __agent_stats_default_rates --description "Set default API pricing rates for agent-stats cost estimation"
-    set -l version "2026-03-21-v1"
+    set -l rates_ver "2026-03-21-v1"
 
     # Skip if already up to date
-    if test "$__agent_stats_rates_version" = "$version"; and test -n "$agent_stats_cost_rates"
+    if test "$__agent_stats_rates_version" = "$rates_ver"; and test -n "$agent_stats_cost_rates"
         return
     end
 
@@ -162,5 +162,5 @@ function __agent_stats_default_rates --description "Set default API pricing rate
         gemini:gemini-3.1-pro:out=12 \
         gemini:gemini-3.1-pro:cache=0.2
 
-    set -U __agent_stats_rates_version $version
+    set -U __agent_stats_rates_version $rates_ver
 end
