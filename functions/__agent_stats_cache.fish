@@ -17,7 +17,7 @@ function __agent_stats_cache --description "Cache layer for agent-stats provider
     # Check if cache exists
     if test -f $cache_file
         set -l now (date +%s)
-        set -l mtime (stat -f %m $cache_file 2>/dev/null; or stat -c %Y $cache_file 2>/dev/null)
+        set -l mtime (stat -c %Y $cache_file 2>/dev/null; or stat -f %m $cache_file 2>/dev/null)
         if test -n "$mtime"
             set -l age (math "$now - $mtime")
 
