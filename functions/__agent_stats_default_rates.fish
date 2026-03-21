@@ -1,8 +1,8 @@
 function __agent_stats_default_rates --description "Set default API pricing rates for agent-stats cost estimation"
     set -l rates_ver "2026-03-21-v1"
 
-    # Skip if already up to date
-    if test "$__agent_stats_rates_version" = "$rates_ver"; and test -n "$agent_stats_cost_rates"
+    # Skip if already up to date and rates exist
+    if test "$__agent_stats_rates_version" = "$rates_ver"; and test (count $agent_stats_cost_rates) -gt 0
         return
     end
 
