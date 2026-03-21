@@ -21,7 +21,7 @@ A [Fish shell](https://fishshell.com) plugin that displays usage statistics for 
 ## Installation
 
 ```fish
-fisher install skyline/agent-stats-fish
+fisher install skyline69/agent-stats-fish
 ```
 
 Or install from a local clone:
