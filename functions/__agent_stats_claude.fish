@@ -21,46 +21,73 @@ end
 function __agent_stats_claude_usage --description "Read usage data from cache or API"
     set -l usage_file $argv[1]
 
-    # Try live OAuth API first for fresh data
-    set -l creds_file ~/.claude/.credentials.json
-    if test -f $creds_file
-        set -l token (jq -r '.claudeAiOauth.accessToken // empty' $creds_file 2>/dev/null)
-        set -l sub_type (jq -r '.claudeAiOauth.subscriptionType // ""' $creds_file 2>/dev/null)
-        if test -n "$token"
-            set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
-            test -z "$plan_name"; and set plan_name "Unknown"
-
-            set -l api_data (curl -s --max-time 5 \
-                -H "Authorization: Bearer $token" \
-                -H "anthropic-beta: oauth-2025-04-20" \
-                -H "User-Agent: claude-code/2.1" \
-                "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-
-            if test $status -eq 0 -a -n "$api_data"
-                set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0' 2>/dev/null | xargs printf "%.0f" 2>/dev/null)
-                set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0' 2>/dev/null | xargs printf "%.0f" 2>/dev/null)
-                set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
-                set -l seven_reset (echo $api_data | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
-                echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
-                return 0
-            end
-        end
-    end
-
-    # Fallback: claude-hud's cache (populated by the HUD plugin via OAuth API)
+    # If HUD cache exists, return it immediately and refresh via API in background
     if test -f $usage_file
         set -l data (jq -r '
             (.lastGoodData // .data) |
             "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
         ' $usage_file 2>/dev/null)
         if test -n "$data"
+            # Background API refresh to keep HUD cache fresh
+            __agent_stats_claude_api_refresh $usage_file &
+            disown 2>/dev/null
             echo $data
             return 0
         end
     end
 
+    # No HUD cache: try live API synchronously (first-run cost, short timeout)
+    set -l api_result (__agent_stats_claude_api_fetch 2)
+    if test -n "$api_result"
+        echo $api_result
+        return 0
+    end
+
     echo "Unknown 0 0"
     return 1
+end
+
+function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth API"
+    set -l timeout $argv[1]
+    test -z "$timeout"; and set timeout 5
+
+    set -l creds_file ~/.claude/.credentials.json
+    test -f $creds_file; or return 1
+
+    set -l token (jq -r '.claudeAiOauth.accessToken // empty' $creds_file 2>/dev/null)
+    test -n "$token"; or return 1
+
+    set -l sub_type (jq -r '.claudeAiOauth.subscriptionType // ""' $creds_file 2>/dev/null)
+    set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
+    test -z "$plan_name"; and set plan_name "Unknown"
+
+    set -l api_data (curl -s --max-time $timeout \
+        -H "Authorization: Bearer $token" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "User-Agent: claude-code/2.1" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+
+    if test $status -eq 0 -a -n "$api_data"
+        set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0' 2>/dev/null | xargs printf "%.0f" 2>/dev/null)
+        set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0' 2>/dev/null | xargs printf "%.0f" 2>/dev/null)
+        set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
+        set -l seven_reset (echo $api_data | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
+        echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
+        return 0
+    end
+
+    return 1
+end
+
+function __agent_stats_claude_api_refresh --description "Background refresh: fetch API and update HUD cache"
+    set -l usage_file $argv[1]
+    set -l result (__agent_stats_claude_api_fetch 5)
+    if test -n "$result"
+        set -l parts (string split " " $result)
+        # Update HUD cache file so next read gets fresh data
+        printf '{"planName":"%s","fiveHour":%s,"sevenDay":%s,"fiveHourResetAt":"%s","sevenDayResetAt":"%s"}' \
+            $parts[1] $parts[2] $parts[3] $parts[4] $parts[5] >$usage_file 2>/dev/null
+    end
 end
 
 # --- Output modes ---
