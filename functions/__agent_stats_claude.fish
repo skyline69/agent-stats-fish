@@ -2,31 +2,27 @@ function __agent_stats_claude --description "Claude Code data provider for agent
     set -l mode $argv[1]
     test -z "$mode"; and set mode compact
 
-    set -l usage_file ~/.claude/plugins/claude-hud/.usage-cache.json
-
     switch $mode
         case prompt
-            __agent_stats_claude_prompt $usage_file
+            __agent_stats_claude_prompt
         case compact
-            __agent_stats_claude_compact $usage_file
+            __agent_stats_claude_compact
         case detailed
-            __agent_stats_claude_detailed $usage_file
+            __agent_stats_claude_detailed
         case cost
-            __agent_stats_claude_cost $usage_file
+            __agent_stats_claude_cost
     end
 end
 
 # --- Usage data helpers ---
 
-function __agent_stats_claude_usage --description "Read usage data from cache or API"
-    set -l usage_file $argv[1]
+function __agent_stats_claude_usage --description "Read usage data from OAuth API with caching"
     set -l api_cache /tmp/agent_stats_claude_api_usage
 
-    # Check our own API cache first (written by background refresh)
+    # Return cached API data immediately, refresh in background
     if test -f $api_cache
         set -l cached (cat $api_cache 2>/dev/null)
         if test -n "$cached"
-            # Background refresh to keep it current
             __agent_stats_claude_api_refresh &
             disown 2>/dev/null
             echo $cached
@@ -34,22 +30,7 @@ function __agent_stats_claude_usage --description "Read usage data from cache or
         end
     end
 
-    # Try HUD plugin's cache (populated by claude-hud plugin)
-    if test -f $usage_file
-        set -l data (jq -r '
-            (.lastGoodData // .data) |
-            "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
-        ' $usage_file 2>/dev/null)
-        if test -n "$data"
-            # Background API refresh to populate our own cache
-            __agent_stats_claude_api_refresh &
-            disown 2>/dev/null
-            echo $data
-            return 0
-        end
-    end
-
-    # No cache: try live API synchronously (first-run cost, short timeout)
+    # No cache: try live API synchronously (first-run, 2s timeout)
     set -l api_result (__agent_stats_claude_api_fetch 2)
     if test -n "$api_result"
         echo $api_result >$api_cache 2>/dev/null
@@ -103,8 +84,6 @@ end
 # --- Output modes ---
 
 function __agent_stats_claude_prompt
-    set -l usage_file $argv[1]
-
     if test (__agent_stats_auth claude) = apikey
         # API key user: return today's token count + message count
         set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
@@ -129,7 +108,7 @@ function __agent_stats_claude_prompt
         return
     end
 
-    set -l usage (__agent_stats_claude_usage $usage_file)
+    set -l usage (__agent_stats_claude_usage)
     set -l parts (string split " " $usage)
     set -l five_hour $parts[2]
     set -l seven_day $parts[3]
@@ -139,8 +118,6 @@ function __agent_stats_claude_prompt
 end
 
 function __agent_stats_claude_compact
-    set -l usage_file $argv[1]
-
     if test (__agent_stats_auth claude) = apikey
         # API key user: show today's tokens, messages, and cost
         set -l today (date +%Y-%m-%d)
@@ -209,7 +186,7 @@ function __agent_stats_claude_compact
         return
     end
 
-    set -l usage (__agent_stats_claude_usage $usage_file)
+    set -l usage (__agent_stats_claude_usage)
     set -l parts (string split " " $usage)
     set -l plan_name $parts[1]
     set -l five_hour $parts[2]
@@ -260,9 +237,7 @@ function __agent_stats_claude_compact
 end
 
 function __agent_stats_claude_detailed
-    set -l usage_file $argv[1]
-
-    set -l usage (__agent_stats_claude_usage $usage_file)
+    set -l usage (__agent_stats_claude_usage)
     set -l parts (string split " " $usage)
     set -l plan_name $parts[1]
     set -l five_hour $parts[2]
@@ -508,8 +483,6 @@ function __agent_stats_claude_detailed
 end
 
 function __agent_stats_claude_cost
-    set -l usage_file $argv[1]
-
     set -l jsonl_files (find ~/.claude/projects -name '*.jsonl' 2>/dev/null)
     if test -z "$jsonl_files"
         set_color --dim
