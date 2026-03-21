@@ -24,6 +24,17 @@ end
 function _agent_stats_install --on-event agent_stats_install
     echo (set_color brgreen)"✓"(set_color normal)" "(set_color --bold)"agent-stats"(set_color normal)" installed! Enable providers with: "(set_color --underline)"agent-stats enable claude|codex|gemini"(set_color normal)
     echo "  Customize icons: "(set_color --dim)"set -U agent_stats_icons claude= codex=⬡ gemini=󰫣"(set_color normal)
+    if command -q starship
+        echo
+        echo (set_color bryellow)"Starship detected"(set_color normal)" — if you use Starship, add agent-stats as a custom module."
+        echo "  Add this to "(set_color --underline)"~/.config/starship.toml"(set_color normal)":"
+        echo
+        echo (set_color --dim)"  [custom.agent_stats]"
+        echo "  command = \"fish -c '__agent_stats_prompt'\""
+        echo "  when = \"fish -c 'test (count \$agent_stats_providers) -gt 0'\""
+        echo "  format = \"\$output\""
+        echo "  shell = [\"bash\"]"(set_color normal)
+    end
 end
 
 # Fisher uninstall event

@@ -107,6 +107,28 @@ set -U agent_stats_icons claude=C codex=X gemini=G
 
 Icons use [Nerd Font](https://www.nerdfonts.com/) glyphs by default. Override with any character or string.
 
+### Starship Integration
+
+If you use [Starship](https://starship.rs), it defines its own `fish_right_prompt` which overrides the built-in one from this plugin. To display agent-stats in your Starship prompt, add a custom module to `~/.config/starship.toml`:
+
+```toml
+[custom.agent_stats]
+command = "fish -c '__agent_stats_prompt'"
+when = "fish -c 'test (count $agent_stats_providers) -gt 0'"
+format = "$output"
+shell = ["bash"]
+```
+
+This calls the same `__agent_stats_prompt` function used by the built-in right prompt, so all formatting, icons, and color coding work identically. The `format = "$output"` setting passes through ANSI colors without Starship's default style wrapping.
+
+Then add `${custom.agent_stats}` wherever you want it in your `format` or `right_format`:
+
+```toml
+right_format = """$custom"""
+```
+
+The `agent-stats` and `agent-stats -d` commands work normally regardless of prompt framework.
+
 ### Adjusting Cache TTL
 
 ```fish
