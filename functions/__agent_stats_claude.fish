@@ -18,27 +18,15 @@ end
 
 # --- Usage data helpers ---
 
-function __agent_stats_claude_usage --description "Read usage data from cache file"
+function __agent_stats_claude_usage --description "Read usage data from cache or API"
     set -l usage_file $argv[1]
 
-    # Try claude-hud's cache first (populated by the HUD plugin via OAuth API)
-    if test -f $usage_file
-        set -l data (jq -r '
-            (.lastGoodData // .data) |
-            "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
-        ' $usage_file 2>/dev/null)
-        if test -n "$data"
-            echo $data
-            return 0
-        end
-    end
-
-    # Fallback: try reading credentials and calling API directly
+    # Try live OAuth API first for fresh data
     set -l creds_file ~/.claude/.credentials.json
     if test -f $creds_file
-        set -l token (jq -r '.claudeAiOauth.accessToken // ""' $creds_file 2>/dev/null)
+        set -l token (jq -r '.claudeAiOauth.accessToken // empty' $creds_file 2>/dev/null)
         set -l sub_type (jq -r '.claudeAiOauth.subscriptionType // ""' $creds_file 2>/dev/null)
-        if test -n "$token" -a "$token" != ""
+        if test -n "$token"
             set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
             test -z "$plan_name"; and set plan_name "Unknown"
 
@@ -56,6 +44,18 @@ function __agent_stats_claude_usage --description "Read usage data from cache fi
                 echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
                 return 0
             end
+        end
+    end
+
+    # Fallback: claude-hud's cache (populated by the HUD plugin via OAuth API)
+    if test -f $usage_file
+        set -l data (jq -r '
+            (.lastGoodData // .data) |
+            "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
+        ' $usage_file 2>/dev/null)
+        if test -n "$data"
+            echo $data
+            return 0
         end
     end
 
