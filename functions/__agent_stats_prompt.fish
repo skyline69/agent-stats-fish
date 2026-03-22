@@ -10,9 +10,16 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
         set -g __agent_stats_icon_claude C
         set -g __agent_stats_icon_codex X
         set -g __agent_stats_icon_gemini G
+        # Normalize: handle both list ("a=1" "b=2") and single-string ("a=1 b=2") formats
+        set -l entries
         for entry in $agent_stats_icons
-            set -l kv (string split "=" $entry)
-            if test (count $kv) -eq 2
+            for sub in (string split " " $entry)
+                test -n "$sub"; and set -a entries $sub
+            end
+        end
+        for entry in $entries
+            set -l kv (string split -m 1 "=" $entry)
+            if test (count $kv) -eq 2; and test -n "$kv[2]"
                 switch $kv[1]
                     case claude
                         set -g __agent_stats_icon_claude $kv[2]
