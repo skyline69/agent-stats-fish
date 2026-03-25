@@ -38,7 +38,7 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
     if test -f $hud_cache
         set -l data (jq -r '
             (.lastGoodData // .data) |
-            "\(.planName // "Unknown") \(.fiveHour // 0) \(.sevenDay // 0) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
+            "\(.planName // "Unknown") \(.fiveHour // 0 | round) \(.sevenDay // 0 | round) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
         ' $hud_cache 2>/dev/null)
         if test -n "$data"
             echo $data
@@ -117,6 +117,10 @@ function __agent_stats_claude_prompt
     set -l five_hour $parts[2]
     set -l seven_day $parts[3]
     set -l plan_name $parts[1]
+
+    # Round to integers (HUD cache may return floats)
+    set five_hour (printf "%.0f" $five_hour 2>/dev/null; or echo 0)
+    set seven_day (printf "%.0f" $seven_day 2>/dev/null; or echo 0)
 
     echo "$five_hour $seven_day $plan_name"
 end

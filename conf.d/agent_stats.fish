@@ -37,6 +37,11 @@ if functions -q _tide_print_item
     # baseline — __agent_stats_prompt embeds its own ANSI color codes).
     set -q tide_agent_stats_bg_color; or set -U tide_agent_stats_bg_color normal
     set -q tide_agent_stats_color; or set -U tide_agent_stats_color normal
+    # Ensure same-color items are separated by a space (tide's default is empty,
+    # which causes adjacent items like node version and time to concatenate).
+    if test -z "$tide_right_prompt_separator_same_color"
+        set -U tide_right_prompt_separator_same_color ' '
+    end
     if not contains agent_stats $tide_right_prompt_items
         set -U tide_right_prompt_items $tide_right_prompt_items agent_stats
         functions -q tide; and tide reload 2>/dev/null
