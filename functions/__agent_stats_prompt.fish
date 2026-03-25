@@ -33,7 +33,32 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
     end
 
     for provider in $agent_stats_providers
-        set -l data (__agent_stats_cache $provider prompt $agent_stats_prompt_cache_ttl)
+        set -l data
+
+        # Claude HUD fast path: read the claude-hud cache directly (~1ms) to
+        # bypass the cache layer entirely.  Only jq-parse when the file changes
+        # (mtime-based check using builtins — zero forks on cache hit).
+        if test "$provider" = claude
+            set -l hud_cache ~/.claude/plugins/claude-hud/.usage-cache.json
+            if test -f $hud_cache
+                set -l hud_mtime (path mtime -- $hud_cache 2>/dev/null)
+                if test -n "$hud_mtime" -a "$hud_mtime" != "$__agent_stats_hud_mtime"
+                    set -g __agent_stats_hud_mtime $hud_mtime
+                    set -g __agent_stats_hud_data (jq -r '
+                        (.lastGoodData // .data) |
+                        "\(.fiveHour // 0 | round) \(.sevenDay // 0 | round) \(.planName // "Unknown")"
+                    ' $hud_cache 2>/dev/null)
+                end
+                if test -n "$__agent_stats_hud_data"
+                    set data $__agent_stats_hud_data
+                end
+            end
+        end
+
+        # Fall back to cache layer if no fast-path data available
+        if test -z "$data"
+            set data (__agent_stats_cache $provider prompt $agent_stats_prompt_cache_ttl)
+        end
 
         switch $provider
             case claude

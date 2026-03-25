@@ -20,6 +20,28 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
     # Called by the cache layer which handles TTL and stale-while-revalidate.
     set -l last_good /tmp/agent_stats_claude_last_good
 
+    # Fast path: claude-hud plugin cache (~1ms local read vs 2-5s API call).
+    # If the HUD cache is fresh (< 60s), use it directly for near-live data.
+    set -l hud_cache ~/.claude/plugins/claude-hud/.usage-cache.json
+    if test -f $hud_cache
+        set -l hud_mtime (path mtime -- $hud_cache 2>/dev/null)
+        if test -n "$hud_mtime"
+            set -l hud_age (math "$EPOCHSECONDS - $hud_mtime")
+            if test "$hud_age" -lt 60
+                set -l data (jq -r '
+                    (.lastGoodData // .data) |
+                    "\(.planName // "Unknown") \(.fiveHour // 0 | round) \(.sevenDay // 0 | round) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
+                ' $hud_cache 2>/dev/null)
+                if test -n "$data"
+                    echo $data >$last_good 2>/dev/null
+                    echo $data
+                    return 0
+                end
+            end
+        end
+    end
+
+    # Normal path: OAuth API call
     set -l api_result (__agent_stats_claude_api_fetch 5)
     if test -n "$api_result"
         echo $api_result >$last_good 2>/dev/null
@@ -27,23 +49,10 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
         return 0
     end
 
-    # Fallback 1: last known good API response
+    # Fallback: last known good response
     if test -f $last_good
         cat $last_good
         return 0
-    end
-
-    # Fallback 2: claude-hud plugin cache (read-only, never written by us)
-    set -l hud_cache ~/.claude/plugins/claude-hud/.usage-cache.json
-    if test -f $hud_cache
-        set -l data (jq -r '
-            (.lastGoodData // .data) |
-            "\(.planName // "Unknown") \(.fiveHour // 0 | round) \(.sevenDay // 0 | round) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
-        ' $hud_cache 2>/dev/null)
-        if test -n "$data"
-            echo $data
-            return 0
-        end
     end
 
     echo "Unknown 0 0"

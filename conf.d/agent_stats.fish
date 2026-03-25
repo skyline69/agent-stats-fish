@@ -9,7 +9,7 @@ if not set -q agent_stats_cache_ttl
     set -U agent_stats_cache_ttl 300
 end
 if not set -q agent_stats_prompt_cache_ttl
-    set -U agent_stats_prompt_cache_ttl 30
+    set -U agent_stats_prompt_cache_ttl 10
 end
 __agent_stats_default_rates
 if not set -q agent_stats_cost_currency
@@ -88,7 +88,48 @@ function _agent_stats_uninstall --on-event agent_stats_uninstall
     set -e __agent_stats_auth_claude
     set -e __agent_stats_auth_codex
     set -e __agent_stats_auth_gemini
-    for f in /tmp/agent_stats_cache_*
+    for f in /tmp/agent_stats_cache_* /tmp/agent_stats_refreshing_*
         rm -f $f 2>/dev/null
+    end
+end
+
+# Proactive cache pre-warming: refresh stale prompt caches after each command
+# so data is fresh by the next prompt render. Must be defined here (not in
+# functions/) because fish only autoloads functions called by name — event
+# handlers need explicit registration at startup.
+function __agent_stats_postexec --on-event fish_postexec
+    test (count $agent_stats_providers) -eq 0; and return
+
+    set -l ttl (set -q agent_stats_prompt_cache_ttl; and echo $agent_stats_prompt_cache_ttl; or echo 10)
+
+    for provider in $agent_stats_providers
+        set -l cache_file /tmp/agent_stats_cache_{$provider}_prompt
+
+        # Skip if a refresh is already running for this provider
+        set -l lock /tmp/agent_stats_refreshing_{$provider}
+        if test -f $lock
+            set -l lock_pid (cat $lock 2>/dev/null)
+            if test -n "$lock_pid"; and kill -0 $lock_pid 2>/dev/null
+                continue
+            end
+            rm -f $lock 2>/dev/null
+        end
+
+        # Skip if cache is fresh enough (more than 5s of TTL remaining)
+        if test -f $cache_file
+            set -l mtime (path mtime -- $cache_file 2>/dev/null)
+            if test -n "$mtime"
+                set -l age (math "$EPOCHSECONDS - $mtime")
+                test "$age" -lt (math "$ttl - 5"); and continue
+            end
+        end
+
+        # Background refresh with PID lock
+        fish -c "
+            echo %self > /tmp/agent_stats_refreshing_$provider
+            __agent_stats_cache_refresh $provider prompt /tmp/agent_stats_cache_{$provider}_prompt
+            rm -f /tmp/agent_stats_refreshing_$provider 2>/dev/null
+        " &
+        disown 2>/dev/null
     end
 end
