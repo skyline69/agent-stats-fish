@@ -20,14 +20,22 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
     # Called by the cache layer which handles TTL and stale-while-revalidate.
     set -l last_good /tmp/agent_stats_claude_last_good
 
-    # Fast path: claude-hud plugin cache (~1ms local read vs 2-5s API call).
-    # If the HUD cache is fresh (< 60s), use it directly for near-live data.
+    # Primary: OAuth API call
+    set -l api_result (__agent_stats_claude_api_fetch 5)
+    set -l api_status $status
+    if test -n "$api_result"
+        echo $api_result >$last_good 2>/dev/null
+        echo $api_result
+        return 0
+    end
+
+    # Fallback 1: claude-hud plugin cache (useful when rate-limited or API unavailable)
     set -l hud_cache ~/.claude/plugins/claude-hud/.usage-cache.json
     if test -f $hud_cache
         set -l hud_mtime (path mtime -- $hud_cache 2>/dev/null)
         if test -n "$hud_mtime"
             set -l hud_age (math "$EPOCHSECONDS - $hud_mtime")
-            if test "$hud_age" -lt 60
+            if test "$hud_age" -lt 120
                 set -l data (jq -r '
                     (.lastGoodData // .data) |
                     "\(.planName // "Unknown") \(.fiveHour // 0 | round) \(.sevenDay // 0 | round) \(.fiveHourResetAt // "") \(.sevenDayResetAt // "")"
@@ -41,15 +49,7 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
         end
     end
 
-    # Normal path: OAuth API call
-    set -l api_result (__agent_stats_claude_api_fetch 5)
-    if test -n "$api_result"
-        echo $api_result >$last_good 2>/dev/null
-        echo $api_result
-        return 0
-    end
-
-    # Fallback: last known good response
+    # Fallback 2: last known good response
     if test -f $last_good
         cat $last_good
         return 0
@@ -59,39 +59,92 @@ function __agent_stats_claude_usage --description "Read usage data from OAuth AP
     return 1
 end
 
-function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth API"
-    set -l timeout $argv[1]
-    test -z "$timeout"; and set timeout 5
+function __agent_stats_claude_read_creds --description "Read OAuth credentials (macOS Keychain or file)"
+    # macOS: Keychain (where Claude Code 2.x stores credentials)
+    if command -q security
+        set -l creds_json (security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+        if test -n "$creds_json"
+            echo $creds_json
+            return 0
+        end
+    end
 
+    # Linux / fallback: file-based credentials
     set -l creds_file ~/.claude/.credentials.json
-    test -f $creds_file; or return 1
-
-    set -l token (jq -r '.claudeAiOauth.accessToken // empty' $creds_file 2>/dev/null)
-    test -n "$token"; or return 1
-
-    set -l sub_type (jq -r '.claudeAiOauth.subscriptionType // ""' $creds_file 2>/dev/null)
-    set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
-    test -z "$plan_name"; and set plan_name "Unknown"
-
-    set -l api_data (curl -s --max-time $timeout \
-        -H "Authorization: Bearer $token" \
-        -H "anthropic-beta: oauth-2025-04-20" \
-        -H "User-Agent: claude-code/2.1" \
-        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-
-    if test $status -eq 0 -a -n "$api_data"
-        # Skip error responses (rate limit, auth failure, etc.)
-        echo $api_data | jq -e '.error' >/dev/null 2>&1; and return 1
-
-        set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0 | round' 2>/dev/null)
-        set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0 | round' 2>/dev/null)
-        set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
-        set -l seven_reset (echo $api_data | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
-        echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
+    if test -f $creds_file
+        cat $creds_file
         return 0
     end
 
     return 1
+end
+
+function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth API with rate-limit backoff"
+    set -l timeout $argv[1]
+    test -z "$timeout"; and set timeout 5
+
+    # Rate-limit backoff: skip API call if we're in a cooldown period
+    set -l backoff_file /tmp/agent_stats_claude_backoff
+    if test -f $backoff_file
+        set -l backoff_until (cat $backoff_file 2>/dev/null)
+        set -l now (date +%s)
+        if test -n "$backoff_until" -a -n "$now"
+            if test "$now" -lt "$backoff_until" 2>/dev/null
+                return 2
+            end
+        end
+        rm -f $backoff_file
+    end
+
+    set -l creds_json (__agent_stats_claude_read_creds)
+    test -n "$creds_json"; or return 1
+
+    set -l token (echo $creds_json | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    test -n "$token"; or return 1
+
+    set -l sub_type (echo $creds_json | jq -r '.claudeAiOauth.subscriptionType // ""' 2>/dev/null)
+    set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
+    test -z "$plan_name"; and set plan_name "Unknown"
+
+    # Capture HTTP status code alongside response body
+    # Fish splits command output on newlines into a list, so [-1] is the status code
+    set -l response (curl -s -w '\n%{http_code}' --max-time $timeout \
+        -H "Authorization: Bearer $token" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "User-Agent: claude-code/2.1" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+    set -l curl_status $status
+
+    if test $curl_status -ne 0 -o (count $response) -lt 2
+        return 1
+    end
+
+    set -l http_code $response[-1]
+    set -l api_data (string join \n -- $response[1..-2])
+
+    # Handle rate limiting (429) — back off for 60s
+    if test "$http_code" = 429
+        math (date +%s)" + 60" >$backoff_file 2>/dev/null
+        return 2
+    end
+
+    # Handle server errors (5xx) — brief 30s backoff
+    if string match -qr '^5' -- "$http_code"
+        math (date +%s)" + 30" >$backoff_file 2>/dev/null
+        return 1
+    end
+
+    # Skip non-success or error JSON responses
+    if test "$http_code" != 200; or echo $api_data | jq -e '.error' >/dev/null 2>&1
+        return 1
+    end
+
+    set -l five_hour (echo $api_data | jq -r '.five_hour.utilization // 0 | round' 2>/dev/null)
+    set -l seven_day (echo $api_data | jq -r '.seven_day.utilization // 0 | round' 2>/dev/null)
+    set -l five_reset (echo $api_data | jq -r '.five_hour.resets_at // ""' 2>/dev/null)
+    set -l seven_reset (echo $api_data | jq -r '.seven_day.resets_at // ""' 2>/dev/null)
+    echo "$plan_name $five_hour $seven_day $five_reset $seven_reset"
+    return 0
 end
 
 # --- Output modes ---
