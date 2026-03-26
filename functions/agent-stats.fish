@@ -234,12 +234,14 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
                     echo (set_color brred)"error"(set_color normal)": takes no arguments" >&2
                     return 1
                 end
-                for f in /tmp/agent_stats_cache_*
+                for f in /tmp/agent_stats_cache_* /tmp/agent_stats_claude_last_good /tmp/agent_stats_claude_backoff /tmp/agent_stats_lock_*
                     rm -f $f 2>/dev/null
                 end
                 set -e __agent_stats_auth_claude
                 set -e __agent_stats_auth_codex
                 set -e __agent_stats_auth_gemini
+                set -e __agent_stats_hud_data
+                set -e __agent_stats_hud_mtime
                 # Fall through to display
 
             case cost
@@ -297,10 +299,31 @@ function agent-stats --description "Display Claude Code, Codex & Gemini usage st
         set mode detailed
     end
 
+    if isatty stderr
+        printf '  %sFetching usage stats...%s' (set_color --dim) (set_color normal) >&2
+    end
+
+    set -l results
     for provider in $agent_stats_providers
-        __agent_stats_cache $provider $mode
+        switch $provider
+            case claude
+                set -a results (string collect -- (__agent_stats_claude $mode))
+            case codex
+                set -a results (string collect -- (__agent_stats_codex $mode))
+            case gemini
+                set -a results (string collect -- (__agent_stats_gemini $mode))
+        end
         if test $status -eq 130
+            printf '\r\033[2K' >&2
             return 130
         end
+    end
+
+    if isatty stderr
+        printf '\r\033[2K' >&2
+    end
+
+    for result in $results
+        echo $result
     end
 end
