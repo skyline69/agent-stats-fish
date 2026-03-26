@@ -62,8 +62,26 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
         end
 
         # Fall back to cache layer if no fast-path data available
+        set -l claude_stale false
         if test -z "$data"
             set data (__agent_stats_cache $provider prompt $agent_stats_prompt_cache_ttl)
+
+            # Staleness check: if the last successful API/HUD fetch was >10min ago, data is stale
+            if test "$provider" = claude
+                set -l last_good /tmp/agent_stats_claude_last_good
+                if test -f $last_good
+                    set -l lg_mtime (path mtime -- $last_good 2>/dev/null)
+                    if test -n "$lg_mtime"
+                        set -l lg_age (math "$EPOCHSECONDS - $lg_mtime")
+                        if test "$lg_age" -gt 600
+                            set claude_stale true
+                        end
+                    end
+                else
+                    # No last-good file at all — no successful fetch ever
+                    set claude_stale true
+                end
+            end
         end
 
         switch $provider
@@ -81,7 +99,10 @@ function __agent_stats_prompt --description "Right-prompt helper for agent-stats
                     set -l five_hour $fields[1]
                     set -l alert (set -q agent_stats_alert_threshold; and echo $agent_stats_alert_threshold; or echo 80)
                     set -l warn ""
-                    if test "$five_hour" -ge "$alert" 2>/dev/null
+                    if test "$claude_stale" = true
+                        # Stale data — dim everything to indicate it may be outdated
+                        set segment (set_color --dim)$__agent_stats_icon_claude" "$five_hour"%"(set_color normal)
+                    else if test "$five_hour" -ge "$alert" 2>/dev/null
                         set warn (set_color brred --bold)"⚠ "(set_color normal)
                         set segment $warn(set_color e8590c)$__agent_stats_icon_claude(set_color normal)" "(set_color brred --bold)$five_hour"%"(set_color normal)
                     else if test "$five_hour" -ge 50 2>/dev/null

@@ -79,6 +79,98 @@ function __agent_stats_claude_read_creds --description "Read OAuth credentials (
     return 1
 end
 
+function __agent_stats_claude_refresh_token --description "Refresh expired OAuth access token"
+    set -l lock_file /tmp/agent_stats_claude_refresh.lock
+
+    # File-lock to prevent concurrent refreshes (e.g. background cache + prompt)
+    if test -f $lock_file
+        set -l lock_age 0
+        set -l lock_mtime (path mtime -- $lock_file 2>/dev/null)
+        if test -n "$lock_mtime"
+            set lock_age (math "$EPOCHSECONDS - $lock_mtime")
+        end
+        # Stale lock (>30s) — remove and continue
+        if test "$lock_age" -lt 30
+            return 1
+        end
+        rm -f $lock_file
+    end
+    echo $fish_pid >$lock_file 2>/dev/null
+
+    set -l creds_json (__agent_stats_claude_read_creds)
+    if test -z "$creds_json"
+        rm -f $lock_file
+        return 1
+    end
+
+    set -l refresh_token (echo $creds_json | jq -r '.claudeAiOauth.refreshToken // empty' 2>/dev/null)
+    if test -z "$refresh_token"
+        rm -f $lock_file
+        return 1
+    end
+
+    set -l response (curl -s -w '\n%{http_code}' --max-time 10 \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"grant_type":"refresh_token","refresh_token":"'$refresh_token'","client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e"}' \
+        "https://api.anthropic.com/v1/oauth/token" 2>/dev/null)
+
+    if test (count $response) -lt 2
+        rm -f $lock_file
+        return 1
+    end
+
+    set -l http_code $response[-1]
+    set -l body (string join \n -- $response[1..-2])
+
+    if test "$http_code" != 200
+        rm -f $lock_file
+        return 1
+    end
+
+    set -l new_access (echo $body | jq -r '.access_token // empty' 2>/dev/null)
+    set -l new_refresh (echo $body | jq -r '.refresh_token // empty' 2>/dev/null)
+    set -l expires_in (echo $body | jq -r '.expires_in // empty' 2>/dev/null)
+
+    if test -z "$new_access" -o -z "$new_refresh"
+        rm -f $lock_file
+        return 1
+    end
+
+    # Calculate new expiresAt (epoch milliseconds)
+    set -l now_s "$EPOCHSECONDS"
+    test -n "$now_s"; or set now_s (date +%s)
+    set -l new_expires_at (math "$now_s * 1000 + $expires_in * 1000" 2>/dev/null)
+    test -n "$new_expires_at"; or set new_expires_at (math "$now_s * 1000 + 28800000")
+
+    # Rebuild credentials JSON with updated OAuth fields
+    set -l new_creds (echo $creds_json | jq -c \
+        --arg at "$new_access" \
+        --arg rt "$new_refresh" \
+        --argjson ea "$new_expires_at" \
+        '.claudeAiOauth.accessToken = $at | .claudeAiOauth.refreshToken = $rt | .claudeAiOauth.expiresAt = $ea' \
+        2>/dev/null)
+
+    if test -z "$new_creds"
+        rm -f $lock_file
+        return 1
+    end
+
+    # Write back to storage
+    if command -q security
+        security add-generic-password -U -s "Claude Code-credentials" -a "$USER" -w "$new_creds" 2>/dev/null
+    else if test -f ~/.claude/.credentials.json
+        echo $new_creds >~/.claude/.credentials.json 2>/dev/null
+    end
+
+    # Clear cached auth detection so it re-reads fresh creds
+    set -e __agent_stats_auth_claude 2>/dev/null
+
+    rm -f $lock_file
+    echo $new_access
+    return 0
+end
+
 function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth API with rate-limit backoff"
     set -l timeout $argv[1]
     test -z "$timeout"; and set timeout 5
@@ -102,6 +194,19 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
     set -l token (echo $creds_json | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
     test -n "$token"; or return 1
 
+    # Auto-refresh if token is expired or within 5 minutes of expiring
+    set -l expires_at (echo $creds_json | jq -r '.claudeAiOauth.expiresAt // 0' 2>/dev/null)
+    set -l now_ms (math "$EPOCHSECONDS * 1000" 2>/dev/null)
+    test -n "$now_ms"; or set now_ms 0
+    if test "$expires_at" -gt 0 2>/dev/null; and test "$now_ms" -ge (math "$expires_at - 300000") 2>/dev/null
+        set -l new_token (__agent_stats_claude_refresh_token)
+        if test $status -eq 0 -a -n "$new_token"
+            set token $new_token
+            # Re-read creds for plan name after refresh
+            set creds_json (__agent_stats_claude_read_creds)
+        end
+    end
+
     set -l sub_type (echo $creds_json | jq -r '.claudeAiOauth.subscriptionType // ""' 2>/dev/null)
     set -l plan_name (string replace -r '.*max.*' 'Max' -- $sub_type | string replace -r '.*pro.*' 'Pro' | string replace -r '.*team.*' 'Team')
     test -z "$plan_name"; and set plan_name "Unknown"
@@ -121,6 +226,26 @@ function __agent_stats_claude_api_fetch --description "Fetch usage from OAuth AP
 
     set -l http_code $response[-1]
     set -l api_data (string join \n -- $response[1..-2])
+
+    # Handle 401 — attempt one token refresh and retry
+    if test "$http_code" = 401
+        set -l new_token (__agent_stats_claude_refresh_token)
+        if test $status -eq 0 -a -n "$new_token"
+            set token $new_token
+            set response (curl -s -w '\n%{http_code}' --max-time $timeout \
+                -H "Authorization: Bearer $new_token" \
+                -H "anthropic-beta: oauth-2025-04-20" \
+                -H "User-Agent: claude-code/2.1" \
+                "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+            if test (count $response) -lt 2
+                return 1
+            end
+            set http_code $response[-1]
+            set api_data (string join \n -- $response[1..-2])
+        else
+            return 1
+        end
+    end
 
     # Handle rate limiting (429) — back off for 60s
     if test "$http_code" = 429
